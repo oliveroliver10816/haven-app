@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+<title>Weather</title>
+<meta name="theme-color" content="#213b4a" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23305b6b'/%3E%3Cpath d='M9 20a4 4 0 0 1 .6-7.95A5 5 0 0 1 19 12a3.5 3.5 0 0 1 .3 7z' fill='none' stroke='%23f2d49b' stroke-width='1.8' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<style>
+  :root{
+    --sky-1:#2f5d74;--sky-2:#3d7089;--sky-3:#6ea6b8;
+    --spruce:#1f4b44;--spruce-2:#2e6a60;--sage:#7bb0a4;
+    --honey:#e6b45a;--honey-deep:#d89a2e;--clay:#c1714c;
+    --oat:#f2ede2;--card:#ffffff;--ink:#1f2724;--muted:#5d6b66;--faint:#93a19b;
+    --line:rgba(20,40,34,.12);--r:20px;--r-sm:13px;
+    --ease:cubic-bezier(.2,.7,.2,1);
+    --shadow:0 20px 50px -24px rgba(15,40,34,.5);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+    background:#0e1a1f;color:var(--ink);overflow:hidden;-webkit-font-smoothing:antialiased}
+  /* phone frame on larger screens */
+  #frame{position:relative;width:100%;max-width:440px;height:100dvh;max-height:940px;margin:0 auto;
+    background:var(--oat);overflow:hidden;box-shadow:var(--shadow)}
+  @media(min-width:520px){body{display:flex;align-items:center;justify-content:center;padding:20px}
+    #frame{border-radius:34px;border:1px solid rgba(255,255,255,.08)}}
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column;opacity:0;pointer-events:none;
+    transform:translateY(8px);transition:opacity .4s var(--ease),transform .4s var(--ease)}
+  .screen.on{opacity:1;pointer-events:auto;transform:none}
+  button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+  input{font-family:inherit}
+
+  /* ===================== WEATHER DECOY ===================== */
+  #weather{background:linear-gradient(180deg,var(--sky-1),var(--sky-2) 46%,var(--sky-3));color:#eef6f7}
+  .wx-scroll{flex:1;overflow-y:auto;padding:calc(env(safe-area-inset-top) + 26px) 22px 26px;display:flex;flex-direction:column}
+  .wx-loc{display:flex;align-items:center;gap:8px;font-size:15px;letter-spacing:.02em;opacity:.92}
+  .wx-loc svg{width:16px;height:16px}
+  .wx-date{font-size:13px;opacity:.62;margin-top:2px}
+  .wx-now{margin-top:20px;display:flex;align-items:flex-start;gap:6px}
+  .wx-temp{font-size:104px;font-weight:200;line-height:.9;letter-spacing:-.04em;user-select:none}
+  .wx-temp sup{font-size:34px;font-weight:300;top:-.9em}
+  .wx-cond{margin-top:2px;font-size:19px;font-weight:500;opacity:.95}
+  .wx-hl{font-size:14px;opacity:.7;margin-top:4px}
+  .wx-icon{margin-left:auto;opacity:.9}
+  .wx-icon svg{width:96px;height:96px}
+  .wx-stats{display:flex;gap:10px;margin-top:26px}
+  .wx-stat{flex:1;background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.14);border-radius:var(--r-sm);
+    padding:13px 14px;backdrop-filter:blur(6px)}
+  .wx-stat .k{font-size:11px;text-transform:uppercase;letter-spacing:.08em;opacity:.7}
+  .wx-stat .v{font-size:20px;font-weight:500;margin-top:5px}
+  .wx-fc-label{font-size:12px;text-transform:uppercase;letter-spacing:.1em;opacity:.66;margin:30px 0 12px}
+  .wx-fc{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}
+  .wx-day{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.13);border-radius:15px;
+    padding:15px 6px;text-align:center;transition:transform .12s var(--ease),background .2s;user-select:none}
+  .wx-day:active{transform:scale(.94);background:rgba(255,255,255,.2)}
+  .wx-day .d{font-size:12px;opacity:.8;font-weight:600}
+  .wx-day svg{width:30px;height:30px;margin:9px 0;opacity:.92}
+  .wx-day .t{font-size:14px;font-weight:600}
+  .wx-day .t small{opacity:.55;font-weight:400}
+  .wx-foot{margin-top:auto;padding-top:24px;text-align:center;font-size:11px;opacity:.4;letter-spacing:.03em}
+
+  /* ===================== VAULT (login) ===================== */
+  #vault{background:radial-gradient(130% 90% at 50% 0%,#20423c,#152a27 70%);color:var(--oat);
+    align-items:center;justify-content:center;padding:30px}
+  .vault-card{width:100%;max-width:340px;text-align:center}
+  .vault-badge{width:58px;height:58px;border-radius:17px;margin:0 auto 20px;background:linear-gradient(150deg,var(--spruce-2),var(--spruce));
+    display:grid;place-items:center;box-shadow:0 12px 30px -12px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.12)}
+  .vault-badge svg{width:28px;height:28px;color:var(--honey)}
+  .vault-card h1{font-size:25px;font-weight:600;letter-spacing:.02em;margin:0}
+  .vault-card p{font-size:13.5px;color:var(--sage);margin:7px 0 26px}
+  .field{text-align:left;margin-bottom:13px}
+  .field label{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--sage);margin-left:3px}
+  .field input{width:100%;margin-top:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);
+    border-radius:13px;padding:14px 15px;color:var(--oat);font-size:16px;outline:none;transition:border-color .18s,background .18s}
+  .field input:focus{border-color:var(--honey);background:rgba(255,255,255,.09)}
+  .field input::placeholder{color:rgba(242,237,226,.35)}
+  .vbtn{width:100%;margin-top:8px;background:var(--honey);color:#3a2708;font-weight:700;font-size:16px;
+    padding:15px;border-radius:13px;transition:transform .15s var(--ease),box-shadow .15s,opacity .2s;
+    box-shadow:0 10px 26px -10px rgba(230,180,90,.7)}
+  .vbtn:active{transform:scale(.98)}
+  .vbtn[disabled]{opacity:.6;pointer-events:none}
+  .vmsg{min-height:18px;font-size:13px;margin-top:14px;color:var(--clay)}
+  .vhost{font-size:11px;color:var(--faint);margin-top:18px;word-break:break-all}
+  .vback{position:absolute;top:calc(env(safe-area-inset-top) + 14px);left:16px;font-size:14px;color:var(--sage);
+    display:flex;align-items:center;gap:6px;padding:8px}
+  .vback svg{width:16px;height:16px}
+
+  /* ===================== APP (chat) ===================== */
+  #app{background:var(--oat)}
+  .top{display:flex;align-items:center;gap:12px;padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;
+    background:var(--spruce);color:var(--oat);flex:none}
+  .top .title{font-weight:600;font-size:17px;display:flex;flex-direction:column;line-height:1.2}
+  .top .title small{font-size:11.5px;font-weight:400;color:var(--sage);display:flex;align-items:center;gap:5px}
+  .top .title small svg{width:11px;height:11px}
+  .icbtn{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;color:var(--oat);
+    background:rgba(255,255,255,.08);transition:background .15s}
+  .icbtn:active{background:rgba(255,255,255,.2)}
+  .icbtn svg{width:19px;height:19px}
+  .back{margin-right:-4px}
+  .body{flex:1;overflow-y:auto;background:var(--oat)}
+
+  /* room list */
+  .rooms{padding:6px 0}
+  .room{display:flex;align-items:center;gap:13px;padding:13px 16px;transition:background .15s;cursor:pointer}
+  .room:active{background:rgba(31,75,68,.06)}
+  .room .av{width:48px;height:48px;border-radius:15px;flex:none;display:grid;place-items:center;
+    font-weight:700;font-size:17px;color:#fff;background:linear-gradient(140deg,var(--spruce-2),var(--sage))}
+  .room .meta{flex:1;min-width:0}
+  .room .meta .n{font-weight:600;font-size:16px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .room .meta .p{font-size:13.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  .room .t{font-size:11.5px;color:var(--faint);align-self:flex-start;margin-top:3px}
+  .empty{padding:60px 30px;text-align:center;color:var(--muted)}
+  .empty svg{width:44px;height:44px;color:var(--sage);opacity:.6;margin-bottom:14px}
+  .empty .h{font-weight:600;color:var(--ink);font-size:16px}
+  .empty p{font-size:14px;margin-top:6px}
+
+  /* conversation */
+  .convo{display:flex;flex-direction:column;min-height:100%;padding:14px 14px 6px;gap:3px;justify-content:flex-end}
+  .msg{max-width:80%;padding:9px 13px;border-radius:16px;font-size:15px;line-height:1.4;word-wrap:break-word;
+    background:var(--card);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:5px;
+    box-shadow:0 1px 2px rgba(20,40,34,.05);margin-top:8px}
+  .msg .s{font-size:12px;font-weight:600;color:var(--spruce-2);margin-bottom:2px}
+  .msg .tm{font-size:10.5px;color:var(--faint);margin-top:3px;text-align:right}
+  .msg.me{align-self:flex-end;background:linear-gradient(150deg,var(--spruce-2),var(--spruce));color:#eef6f2;
+    border-color:transparent;border-bottom-left-radius:16px;border-bottom-right-radius:5px}
+  .msg.me .tm{color:rgba(238,246,242,.6)}
+  .daysep{align-self:center;font-size:11px;color:var(--faint);background:rgba(31,75,68,.07);
+    padding:3px 12px;border-radius:999px;margin:12px 0 4px}
+
+  /* composer */
+  .composer{display:flex;align-items:flex-end;gap:9px;padding:10px 12px calc(env(safe-area-inset-bottom) + 10px);
+    background:var(--card);border-top:1px solid var(--line);flex:none}
+  .composer textarea{flex:1;resize:none;max-height:110px;border:1px solid var(--line);border-radius:20px;
+    padding:11px 15px;font-size:15px;background:var(--oat);outline:none;line-height:1.35;color:var(--ink)}
+  .composer textarea:focus{border-color:var(--sage)}
+  .send{width:44px;height:44px;border-radius:50%;flex:none;background:var(--honey);display:grid;place-items:center;
+    transition:transform .14s var(--ease),opacity .2s;box-shadow:0 6px 16px -6px rgba(230,180,90,.7)}
+  .send:active{transform:scale(.9)}
+  .send[disabled]{opacity:.4;pointer-events:none}
+  .send svg{width:20px;height:20px;color:#3a2708}
+
+  .toast{position:absolute;left:50%;bottom:78px;transform:translateX(-50%) translateY(10px);opacity:0;
+    background:var(--ink);color:var(--oat);font-size:13px;padding:9px 16px;border-radius:999px;pointer-events:none;
+    transition:opacity .25s,transform .25s;z-index:20;max-width:90%;text-align:center}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .preview-tag{position:absolute;top:calc(env(safe-area-inset-top) + 10px);right:12px;z-index:15;
+    font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.55);
+    background:rgba(0,0,0,.22);padding:3px 8px;border-radius:6px;pointer-events:none}
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div id="frame">
+
+  <!-- ==================== WEATHER (decoy) ==================== -->
+  <section id="weather" class="screen on">
+    <span class="preview-tag">Haven preview</span>
+    <div class="wx-scroll">
+      <div class="wx-loc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/></svg><span id="wxLoc">Porto</span></div>
+      <div class="wx-date" id="wxDate">—</div>
+
+      <div class="wx-now">
+        <div>
+          <div class="wx-temp" id="wxTemp">18<sup>°</sup></div>
+          <div class="wx-cond" id="wxCond">Partly cloudy</div>
+          <div class="wx-hl" id="wxHL">H:21°  L:13°</div>
+        </div>
+        <div class="wx-icon" id="wxIcon"></div>
+      </div>
+
+      <div class="wx-stats">
+        <div class="wx-stat"><div class="k">Humidity</div><div class="v" id="wxHum">64%</div></div>
+        <div class="wx-stat"><div class="k">Wind</div><div class="v" id="wxWind">12 km/h</div></div>
+        <div class="wx-stat"><div class="k">Feels</div><div class="v" id="wxFeel">17°</div></div>
+      </div>
+
+      <div class="wx-fc-label">5-Day Forecast</div>
+      <div class="wx-fc" id="wxFc"></div>
+
+      <div class="wx-foot">Updated just now · Pull to refresh</div>
+    </div>
+  </section>
+
+  <!-- ==================== VAULT (login) ==================== -->
+  <section id="vault" class="screen">
+    <button class="vback" id="vaultBack"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg> Weather</button>
+    <div class="vault-card">
+      <div class="vault-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+      <h1>Haven</h1>
+      <p>Welcome back. Enter to unlock your circle.</p>
+      <form id="loginForm" autocomplete="off">
+        <div class="field"><label for="u">Name</label><input id="u" type="text" placeholder="your name" autocapitalize="none" autocorrect="off" spellcheck="false" /></div>
+        <div class="field"><label for="p">Passphrase</label><input id="p" type="password" placeholder="••••••••" /></div>
+        <button class="vbtn" id="loginBtn" type="submit">Unlock</button>
+      </form>
+      <div class="vmsg" id="vmsg"></div>
+      <div class="vhost">on your server · <span id="vhost">—</span></div>
+    </div>
+  </section>
+
+  <!-- ==================== APP (chat) ==================== -->
+  <section id="app" class="screen">
+    <!-- rooms view -->
+    <div id="viewRooms" style="display:flex;flex-direction:column;height:100%">
+      <div class="top">
+        <div class="title" style="flex:1">Haven<small><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg> <span id="meName">connected</span></small></div>
+        <button class="icbtn" id="lockBtn" title="Lock (back to weather)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 8h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h1"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/><circle cx="12" cy="14" r="1.4" fill="currentColor" stroke="none"/></svg></button>
+      </div>
+      <div class="body"><div class="rooms" id="roomList"></div></div>
+    </div>
+    <!-- conversation view -->
+    <div id="viewConvo" style="display:none;flex-direction:column;height:100%">
+      <div class="top">
+        <button class="icbtn back" id="convoBack"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <div class="title" style="flex:1"><span id="convoName">Room</span><small><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg> <span id="convoSub">on your server</span></small></div>
+        <button class="icbtn" id="lockBtn2" title="Lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 8h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h1"/><path d="M8 8V6a4 4 0 0 1 8 0v2"/></svg></button>
+      </div>
+      <div class="body" id="convoBody"><div class="convo" id="convo"></div></div>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="Message"></textarea>
+        <button class="send" id="sendBtn" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+"use strict";
+(function(){
+  // ---------- config ----------
+  var HOMESERVER = "https://143-110-180-166.sslip.io";
+  var UNLOCK_SEQUENCE = [1,3,0]; // tap forecast tiles: 2nd, 4th, 1st
+  var $ = function(id){ return document.getElementById(id); };
+  $("vhost").textContent = HOMESERVER.replace("https://","");
+  $("convoSub").textContent = "on your server";
+
+  // ---------- screen switching ----------
+  function show(id){
+    ["weather","vault","app"].forEach(function(s){ $(s).classList.toggle("on", s===id); });
+    document.title = id==="weather" ? "Weather" : "Weather";
+  }
+
+  // ---------- weather decoy (fully local, no network) ----------
+  var ICONS = {
+    sun:'<svg viewBox="0 0 24 24" fill="none" stroke="#ffe6a8" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"/></svg>',
+    cloud:'<svg viewBox="0 0 24 24" fill="none" stroke="#e6eef0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1 .5-7.97A5 5 0 0 1 17 11a3.5 3.5 0 0 1 .3 7z"/></svg>',
+    part:'<svg viewBox="0 0 24 24" fill="none" stroke="#ffe6a8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3"/><path d="M8 2.5V4M3.5 8H5M4.8 4.8l1 1M11.2 4.8l-1 1"/><path stroke="#e6eef0" d="M9 19a3.5 3.5 0 0 1 .4-6.98A4.4 4.4 0 0 1 18 13a3 3 0 0 1 .2 6z"/></svg>',
+    rain:'<svg viewBox="0 0 24 24" fill="none" stroke="#cfe0e6" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 15a4 4 0 0 1 .5-7.97A5 5 0 0 1 17 8a3.5 3.5 0 0 1 .3 7z"/><path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/></svg>'
+  };
+  function bigIcon(kind,color){ var s=ICONS[kind]; return s.replace(/width="[0-9.]+"/g,'width="1.6"'); }
+  var days=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  function initWeather(){
+    var now=new Date();
+    $("wxDate").textContent = now.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'});
+    $("wxIcon").innerHTML = ICONS.part;
+    var base=[
+      {k:'part',hi:21,lo:13},{k:'sun',hi:24,lo:14},{k:'cloud',hi:20,lo:12},
+      {k:'rain',hi:17,lo:11},{k:'part',hi:22,lo:13}
+    ];
+    var html="";
+    for(var i=0;i<5;i++){
+      var d=days[(now.getDay()+i)%7];
+      html+='<div class="wx-day" data-i="'+i+'"><div class="d">'+(i===0?'Today':d)+'</div>'+ICONS[base[i].k]+
+            '<div class="t">'+base[i].hi+'°<small> '+base[i].lo+'°</small></div></div>';
+    }
+    $("wxFc").innerHTML=html;
+    // hidden unlock: tap forecast tiles in secret order
+    var seq=[];
+    $("wxFc").querySelectorAll(".wx-day").forEach(function(el){
+      el.addEventListener("click",function(){
+        seq.push(parseInt(el.getAttribute("data-i"),10));
+        if(seq.length>UNLOCK_SEQUENCE.length) seq.shift();
+        if(seq.length===UNLOCK_SEQUENCE.length && seq.every(function(v,i){return v===UNLOCK_SEQUENCE[i];})){
+          seq=[]; openVault();
+        }
+      });
+    });
+    // fallback opener: long-press the temperature
+    var t=$("wxTemp"), tmr=null;
+    var start=function(){ tmr=setTimeout(openVault,1100); };
+    var stop=function(){ clearTimeout(tmr); };
+    t.addEventListener("mousedown",start); t.addEventListener("touchstart",start,{passive:true});
+    t.addEventListener("mouseup",stop); t.addEventListener("mouseleave",stop);
+    t.addEventListener("touchend",stop); t.addEventListener("touchcancel",stop);
+  }
+  function openVault(){ show("vault"); setTimeout(function(){ $("u").focus(); },300); }
+  $("vaultBack").addEventListener("click",function(){ show("weather"); });
+
+  // ---------- toast ----------
+  var toastTmr;
+  function toast(msg){ var t=$("toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(toastTmr); toastTmr=setTimeout(function(){t.classList.remove("on");},2600); }
+
+  // ---------- lean Matrix client (talks ONLY to your server) ----------
+  var M = { base:HOMESERVER, token:null, userId:null, since:null, rooms:{}, order:[], syncing:false, current:null };
+  function api(path){ return M.base + "/_matrix/client/v3" + path; }
+  function authHeaders(){ return { "Authorization":"Bearer "+M.token, "Content-Type":"application/json" }; }
+
+  async function login(user,pass){
+    var r = await fetch(api("/login"),{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({type:"m.login.password",identifier:{type:"m.id.user",user:user},password:pass})});
+    var d = await r.json();
+    if(!r.ok) throw new Error(d.error||("login failed ("+r.status+")"));
+    M.token=d.access_token; M.userId=d.user_id; return d;
+  }
+  function roomDisplayName(roomId,room){
+    if(room.name) return room.name;
+    // derive from heroes / members
+    var others=(room.heroes||[]).filter(function(h){return h!==M.userId;}).map(function(h){return room.members[h]||h.split(":")[0].replace("@","");});
+    if(others.length) return others.join(", ");
+    return roomId.split(":")[0].replace("!","Room ");
+  }
+  function ingestRoom(roomId,data){
+    var room = M.rooms[roomId] || (M.rooms[roomId]={id:roomId,name:null,members:{},heroes:[],msgs:[],ids:{},last:0});
+    var handleState=function(ev){
+      if(ev.type==="m.room.name" && ev.content) room.name=ev.content.name;
+      if(ev.type==="m.room.member" && ev.content){ room.members[ev.state_key]=ev.content.displayname||ev.state_key.split(":")[0].replace("@",""); }
+    };
+    (data.state && data.state.events||[]).forEach(handleState);
+    var summary=data["m.heroes"]||(data.summary&&data.summary["m.heroes"]);
+    if(summary) room.heroes=summary;
+    (data.timeline && data.timeline.events||[]).forEach(function(ev){
+      if(ev.type==="m.room.name"||ev.type==="m.room.member") handleState(ev);
+      if(ev.type==="m.room.message" && ev.content && !room.ids[ev.event_id]){
+        room.ids[ev.event_id]=1;
+        room.msgs.push({id:ev.event_id,sender:ev.sender,body:ev.content.body||"",ts:ev.origin_server_ts||Date.now(),
+          name:room.members[ev.sender]||ev.sender.split(":")[0].replace("@","")});
+        room.last=Math.max(room.last,ev.origin_server_ts||0);
+      }
+    });
+    room.display=roomDisplayName(roomId,room);
+    if(M.order.indexOf(roomId)<0) M.order.push(roomId);
+  }
+  async function syncOnce(timeout){
+    var url = api("/sync") + "?timeout="+timeout + (M.since?("&since="+encodeURIComponent(M.since)):"?filter=");
+    if(!M.since) url = api("/sync")+"?timeout=0&full_state=false";
+    else url = api("/sync")+"?timeout="+timeout+"&since="+encodeURIComponent(M.since);
+    var r = await fetch(url,{headers:authHeaders()});
+    if(!r.ok) throw new Error("sync "+r.status);
+    var d = await r.json();
+    M.since = d.next_batch;
+    var join = d.rooms && d.rooms.join || {};
+    Object.keys(join).forEach(function(rid){ ingestRoom(rid,join[rid]); });
+    return Object.keys(join).length;
+  }
+  async function syncLoop(){
+    if(M.syncing) return; M.syncing=true;
+    while(M.syncing){
+      try{ await syncOnce(30000); renderRooms(); if(M.current) renderConvo(M.current); }
+      catch(e){ await new Promise(function(r){setTimeout(r,3000);}); }
+    }
+  }
+  async function sendMessage(roomId,text){
+    var txn = "m"+Date.now()+Math.floor(Math.random()*1000);
+    var r = await fetch(api("/rooms/"+encodeURIComponent(roomId)+"/send/m.room.message/"+txn),
+      {method:"PUT",headers:authHeaders(),body:JSON.stringify({msgtype:"m.text",body:text})});
+    if(!r.ok){ var d=await r.json().catch(function(){return{};}); throw new Error(d.error||("send "+r.status)); }
+    return r.json();
+  }
+
+  // ---------- rendering ----------
+  function fmtTime(ts){ return new Date(ts).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}); }
+  function fmtDay(ts){ var d=new Date(ts),n=new Date(); if(d.toDateString()===n.toDateString())return "Today";
+    var y=new Date(n-864e5); if(d.toDateString()===y.toDateString())return "Yesterday";
+    return d.toLocaleDateString(undefined,{day:'numeric',month:'short'}); }
+  function initials(name){ return (name||"?").trim().slice(0,2).toUpperCase(); }
+
+  function renderRooms(){
+    var list=$("roomList");
+    var ids=M.order.slice().sort(function(a,b){ return (M.rooms[b].last||0)-(M.rooms[a].last||0); });
+    if(!ids.length){
+      list.innerHTML='<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"/></svg><div class="h">No conversations yet</div><p>When someone starts a chat with you, it appears here.</p></div>';
+      return;
+    }
+    var html="";
+    ids.forEach(function(rid){
+      var r=M.rooms[rid]; var last=r.msgs[r.msgs.length-1];
+      var prev=last?((last.sender===M.userId?"You: ":"")+last.body):"Tap to open";
+      html+='<div class="room" data-rid="'+rid+'"><div class="av">'+initials(r.display)+'</div>'+
+        '<div class="meta"><div class="n">'+esc(r.display)+'</div><div class="p">'+esc(prev)+'</div></div>'+
+        '<div class="t">'+(r.last?fmtTime(r.last):"")+'</div></div>';
+    });
+    list.innerHTML=html;
+    list.querySelectorAll(".room").forEach(function(el){
+      el.addEventListener("click",function(){ openConvo(el.getAttribute("data-rid")); });
+    });
+  }
+  function esc(s){ return (s||"").replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  function openConvo(rid){
+    M.current=rid; var r=M.rooms[rid];
+    $("convoName").textContent=r.display;
+    $("viewRooms").style.display="none"; $("viewConvo").style.display="flex";
+    renderConvo(rid); $("input").focus();
+  }
+  function renderConvo(rid){
+    var r=M.rooms[rid]; if(!r) return;
+    var el=$("convo"); var html=""; var lastDay="";
+    r.msgs.slice().sort(function(a,b){return a.ts-b.ts;}).forEach(function(m){
+      var day=fmtDay(m.ts);
+      if(day!==lastDay){ html+='<div class="daysep">'+day+'</div>'; lastDay=day; }
+      var me=m.sender===M.userId;
+      html+='<div class="msg'+(me?' me':'')+'">'+(me?'':'<div class="s">'+esc(m.name)+'</div>')+
+        esc(m.body)+'<div class="tm">'+fmtTime(m.ts)+'</div></div>';
+    });
+    el.innerHTML=html || '<div class="daysep">Say hello 👋</div>';
+    var body=$("convoBody"); body.scrollTop=body.scrollHeight;
+  }
+
+  // ---------- wire up chat controls ----------
+  $("convoBack").addEventListener("click",function(){ M.current=null; $("viewConvo").style.display="none"; $("viewRooms").style.display="flex"; renderRooms(); });
+  function lock(){ show("weather"); }
+  $("lockBtn").addEventListener("click",lock); $("lockBtn2").addEventListener("click",lock);
+
+  var input=$("input"), sendBtn=$("sendBtn");
+  function refreshSend(){ sendBtn.disabled = !input.value.trim(); }
+  input.addEventListener("input",function(){ input.style.height="auto"; input.style.height=Math.min(input.scrollHeight,110)+"px"; refreshSend(); });
+  input.addEventListener("keydown",function(e){ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); doSend(); } });
+  sendBtn.addEventListener("click",doSend);
+  async function doSend(){
+    var text=input.value.trim(); if(!text||!M.current) return;
+    input.value=""; input.style.height="auto"; refreshSend();
+    try{ await sendMessage(M.current,text); await syncOnce(0); renderConvo(M.current); renderRooms(); }
+    catch(e){ toast("Couldn't send: "+e.message); input.value=text; refreshSend(); }
+  }
+
+  // ---------- login flow ----------
+  $("loginForm").addEventListener("submit",async function(e){
+    e.preventDefault();
+    var u=$("u").value.trim(), p=$("p").value;
+    if(!u||!p){ $("vmsg").textContent="Enter your name and passphrase."; return; }
+    var btn=$("loginBtn"); btn.disabled=true; btn.textContent="Unlocking…"; $("vmsg").textContent="";
+    try{
+      await login(u,p);
+      $("meName").textContent=M.userId.split(":")[0].replace("@","");
+      await syncOnce(0);          // initial sync
+      renderRooms();
+      show("app");
+      $("viewConvo").style.display="none"; $("viewRooms").style.display="flex";
+      syncLoop();                  // live updates
+      $("u").value=""; $("p").value="";
+    }catch(err){
+      $("vmsg").textContent = /M_FORBIDDEN|403|Invalid/i.test(err.message) ? "That name or passphrase isn't right." : ("Couldn't connect: "+err.message);
+    }finally{ btn.disabled=false; btn.textContent="Unlock"; }
+  });
+
+  // ---------- go ----------
+  initWeather();
+  show("weather");
+  window.__haven={M:M, openVault:openVault}; // for automated testing
+})();
+</script>
+</body>
+</html>
