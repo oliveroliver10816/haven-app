@@ -29749,11 +29749,31 @@ function encodeRecoveryKey(key) {
   const base58key = esm_default2.encode(buf);
   return base58key.match(/.{1,4}/g)?.join(" ");
 }
-var OLM_RECOVERY_KEY_PREFIX;
+function decodeRecoveryKey(recoveryKey) {
+  const result = esm_default2.decode(recoveryKey.replace(/ /g, ""));
+  let parity = 0;
+  for (const b of result) {
+    parity ^= b;
+  }
+  if (parity !== 0) {
+    throw new Error("Incorrect parity");
+  }
+  for (let i = 0; i < OLM_RECOVERY_KEY_PREFIX.length; ++i) {
+    if (result[i] !== OLM_RECOVERY_KEY_PREFIX[i]) {
+      throw new Error("Incorrect prefix");
+    }
+  }
+  if (result.length !== OLM_RECOVERY_KEY_PREFIX.length + KEY_SIZE + 1) {
+    throw new Error("Incorrect length");
+  }
+  return Uint8Array.from(result.slice(OLM_RECOVERY_KEY_PREFIX.length, OLM_RECOVERY_KEY_PREFIX.length + KEY_SIZE));
+}
+var OLM_RECOVERY_KEY_PREFIX, KEY_SIZE;
 var init_recovery_key = __esm({
   "node_modules/matrix-js-sdk/lib/crypto-api/recovery-key.js"() {
     init_esm2();
     OLM_RECOVERY_KEY_PREFIX = [139, 1];
+    KEY_SIZE = 32;
   }
 });
 
@@ -69871,6 +69891,7 @@ var require_browser_encrypt_attachment = __commonJS({
 var require_app = __commonJS({
   "src/app.js"() {
     init_browser_index();
+    init_recovery_key();
     var import_matrix_encrypt_attachment = __toESM(require_browser_encrypt_attachment());
     (function() {
       "use strict";
@@ -69886,7 +69907,7 @@ var require_app = __commonJS({
         return window.matchMedia("(min-width:720px)").matches;
       }
       var st = document.createElement("style");
-      st.textContent = ".row{animation:none!important}.rnew{animation:hvpop .32s cubic-bezier(.2,.7,.2,1)}@keyframes hvpop{from{opacity:0;transform:translateY(9px) scale(.97)}to{opacity:1;transform:none}}.empty-note{padding:28px 20px;text-align:center;color:#7c8a83;font-size:14px;line-height:1.5}.srch-res{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:12px;background:rgba(20,40,34,.05);margin-top:7px;font-size:14.5px;text-align:left;border:0;cursor:pointer;color:inherit}.srch-res small{color:#8a938c;margin-left:auto}.srch-res .av{width:30px;height:30px;font-size:12px}img.msg-img{max-width:230px;width:66vw;border-radius:12px;display:block;background:rgba(20,40,34,.06);min-height:70px;object-fit:cover}.msg .meta .tick{width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-left:2px}.row.me .meta .tick{color:rgba(238,246,242,.55)}.row.me .meta .tick.read{color:#66c6ff}.enc-banner{align-self:center;max-width:82%;text-align:center;font-size:12px;line-height:1.45;color:#5c6f66;background:rgba(230,180,90,.14);border:1px solid rgba(230,180,90,.28);border-radius:12px;padding:8px 14px;margin:6px auto 12px;display:flex;gap:7px;align-items:center;justify-content:center}.enc-banner svg{width:13px;height:13px;color:#c79a3f;flex:none}@media(prefers-reduced-motion:reduce){.rnew{animation:none}}";
+      st.textContent = ".row{animation:none!important}.rnew{animation:hvpop .32s cubic-bezier(.2,.7,.2,1)}@keyframes hvpop{from{opacity:0;transform:translateY(9px) scale(.97)}to{opacity:1;transform:none}}.empty-note{padding:28px 20px;text-align:center;color:#7c8a83;font-size:14px;line-height:1.5}.srch-res{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:12px;background:rgba(20,40,34,.05);margin-top:7px;font-size:14.5px;text-align:left;border:0;cursor:pointer;color:inherit}.srch-res small{color:#8a938c;margin-left:auto}.srch-res .av{width:30px;height:30px;font-size:12px}img.msg-img{max-width:230px;width:66vw;border-radius:12px;display:block;background:rgba(20,40,34,.06);min-height:70px;object-fit:cover}.msg .meta .tick{width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-left:2px}.row.me .meta .tick{color:rgba(238,246,242,.55)}.row.me .meta .tick.read{color:#66c6ff}.enc-banner{align-self:center;max-width:82%;text-align:center;font-size:12px;line-height:1.45;color:#5c6f66;background:rgba(230,180,90,.14);border:1px solid rgba(230,180,90,.28);border-radius:12px;padding:8px 14px;margin:6px auto 12px;display:flex;gap:7px;align-items:center;justify-content:center}.enc-banner svg{width:13px;height:13px;color:#c79a3f;flex:none}.hvn-ov{position:fixed;inset:0;z-index:200;background:rgba(15,25,22,.55);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;padding:22px}.hvn-card{background:#fbf8f2;border-radius:22px;max-width:380px;width:100%;padding:28px 24px;text-align:center;box-shadow:0 24px 60px -20px rgba(0,0,0,.5)}.hvn-ic{width:56px;height:56px;border-radius:16px;margin:0 auto 16px;background:linear-gradient(150deg,#2e6a60,#1f4b44);display:grid;place-items:center;color:#e6b45a}.hvn-ic svg{width:28px;height:28px}.hvn-card h2{font-family:Fraunces,serif;font-size:22px;margin:0 0 8px;color:#1f2724}.hvn-card p{font-size:14px;color:#5d6b66;line-height:1.5;margin:0 0 18px}.hvn-card p b{color:#1f2724}.hvn-key{font-family:monospace;font-size:15px;letter-spacing:.02em;background:#f2ede2;border:1px dashed #c1714c;border-radius:12px;padding:14px;word-break:break-all;color:#1f2724;margin-bottom:14px;line-height:1.6}.hvn-input{width:100%;padding:13px 15px;border:1px solid rgba(20,40,34,.2);border-radius:12px;font-size:15px;margin-bottom:14px;font-family:monospace;outline:none;box-sizing:border-box}.hvn-btn{width:100%;background:#e6b45a;color:#3a2708;font-weight:700;border:0;border-radius:13px;padding:14px;font-size:15px;cursor:pointer;margin-bottom:8px}.hvn-btn2{width:100%;background:rgba(31,75,68,.08);color:#1f4b44;font-weight:600;border:0;border-radius:13px;padding:12px;font-size:14px;cursor:pointer;margin-bottom:10px}.hvn-btn3{width:100%;background:none;color:#8a938c;border:0;padding:8px;font-size:13.5px;cursor:pointer}@media(prefers-reduced-motion:reduce){.rnew{animation:none}}";
       document.head.appendChild(st);
       function esc(s) {
         return (s || "").replace(/[&<>"]/g, function(c) {
@@ -69953,12 +69974,22 @@ var require_app = __commonJS({
         return false;
       }
       var M = { client: null, userId: null, dname: null, rooms: {}, order: [], invites: {}, current: null, _seen: {} };
-      var replyTarget = null, sheetCtx = null, blobCache = {};
+      var replyTarget = null, sheetCtx = null, blobCache = {}, ssKey = null;
       async function login(u, p) {
         var tmp = createClient({ baseUrl: HS });
         var res = await tmp.login("m.login.password", { identifier: { type: "m.id.user", user: u }, password: p });
         M.userId = res.user_id;
-        var c = createClient({ baseUrl: HS, userId: res.user_id, accessToken: res.access_token, deviceId: res.device_id });
+        var c = createClient({
+          baseUrl: HS,
+          userId: res.user_id,
+          accessToken: res.access_token,
+          deviceId: res.device_id,
+          cryptoCallbacks: { getSecretStorageKey: function(o) {
+            if (!ssKey) return Promise.resolve(null);
+            var kid = Object.keys(o && o.keys || {})[0] || null;
+            return Promise.resolve([kid, ssKey]);
+          } }
+        });
         M.client = c;
         await c.initRustCrypto();
         await c.startClient({ initialSyncLimit: 30 });
@@ -69991,6 +70022,94 @@ var require_app = __commonJS({
         c.on(RoomEvent.Redaction, bump);
         rebuild();
         return res;
+      }
+      async function handleKeyBackup(c) {
+        var crypto = c.getCrypto();
+        if (!crypto) return;
+        var info = null;
+        try {
+          info = await crypto.getKeyBackupInfo();
+        } catch (e) {
+        }
+        if (!info) {
+          try {
+            var rk = await crypto.createRecoveryKeyFromPassphrase();
+            ssKey = rk.privateKey;
+            window.__RECOVERY = rk.encodedPrivateKey;
+            await crypto.bootstrapSecretStorage({ createSecretStorageKey: function() {
+              return Promise.resolve(rk);
+            }, setupNewKeyBackup: true, setupNewSecretStorage: true });
+            try {
+              await crypto.checkKeyBackupAndEnable();
+            } catch (e) {
+            }
+            await showRecoveryKey(rk.encodedPrivateKey);
+          } catch (e) {
+          }
+        } else {
+          var ready = false;
+          try {
+            ready = await crypto.isSecretStorageReady();
+          } catch (e) {
+          }
+          if (!ready) {
+            var entered = await showRestorePrompt();
+            if (entered) {
+              try {
+                ssKey = decodeRecoveryKey(entered.replace(/\s+/g, " ").trim());
+                await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
+                await crypto.restoreKeyBackup();
+                try {
+                  await crypto.checkKeyBackupAndEnable();
+                } catch (e) {
+                }
+                rebuild();
+                refresh();
+                UI.toast("Your chats were restored");
+              } catch (e) {
+                UI.toast("Couldn't restore \u2014 check your Recovery Key");
+              }
+            }
+          } else {
+            try {
+              await crypto.checkKeyBackupAndEnable();
+            } catch (e) {
+            }
+          }
+        }
+      }
+      function showRecoveryKey(keyStr) {
+        return new Promise(function(resolve) {
+          var ov = document.createElement("div");
+          ov.className = "hvn-ov";
+          ov.innerHTML = '<div class="hvn-card"><div class="hvn-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 3l3 3-3 3"/></svg></div><h2>Save your Recovery Key</h2><p>This is the <b>only</b> way to get your chats back if you lose or reinstall the app \u2014 like a crypto-wallet seed phrase. Write it down somewhere safe. Nobody, not even us, can recover it for you.</p><div class="hvn-key" id="hvnKey">' + esc(keyStr) + '</div><button class="hvn-btn2" id="hvnCopy">Copy key</button><button class="hvn-btn" id="hvnDone">I\u2019ve saved it \u2014 continue</button></div>';
+          document.body.appendChild(ov);
+          ov.querySelector("#hvnCopy").addEventListener("click", function() {
+            copyText(keyStr);
+            UI.toast("Copied");
+          });
+          ov.querySelector("#hvnDone").addEventListener("click", function() {
+            ov.remove();
+            resolve();
+          });
+        });
+      }
+      function showRestorePrompt() {
+        return new Promise(function(resolve) {
+          var ov = document.createElement("div");
+          ov.className = "hvn-ov";
+          ov.innerHTML = '<div class="hvn-card"><div class="hvn-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/></svg></div><h2>Restore your chats</h2><p>This looks like a new device. Enter your Recovery Key to bring back your encrypted conversations.</p><input class="hvn-input" id="hvnInput" placeholder="Recovery Key" autocapitalize="none" autocorrect="off" spellcheck="false"><button class="hvn-btn" id="hvnRestore">Restore my chats</button><button class="hvn-btn3" id="hvnSkip">Start fresh instead</button></div>';
+          document.body.appendChild(ov);
+          ov.querySelector("#hvnRestore").addEventListener("click", function() {
+            var v = ov.querySelector("#hvnInput").value.trim();
+            ov.remove();
+            resolve(v || null);
+          });
+          ov.querySelector("#hvnSkip").addEventListener("click", function() {
+            ov.remove();
+            resolve(null);
+          });
+        });
       }
       function rebuild() {
         var c = M.client;
@@ -70739,6 +70858,7 @@ var require_app = __commonJS({
           }
           g("u").value = "";
           g("p").value = "";
+          handleKeyBackup(M.client);
         }).catch(function(err) {
           g("vmsg").textContent = /M_FORBIDDEN|403|Invalid|Unknown|not found/i.test(err.message || "") ? "That name or passphrase isn't right." : "Couldn't connect: " + (err.message || err);
         }).then(function() {
