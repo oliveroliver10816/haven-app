@@ -60049,6 +60049,372 @@ var init_room_state = __esm({
   }
 });
 
+// node_modules/matrix-js-sdk/lib/store/memory.js
+function isValidFilterId(filterId) {
+  const isValidStr = typeof filterId === "string" && !!filterId && filterId !== "undefined" && // exclude these as we've serialized undefined in localStorage before
+  filterId !== "null";
+  return isValidStr || typeof filterId === "number";
+}
+var MemoryStore;
+var init_memory = __esm({
+  "node_modules/matrix-js-sdk/lib/store/memory.js"() {
+    init_defineProperty();
+    init_room_state();
+    init_utils();
+    init_membership();
+    MemoryStore = class {
+      /**
+       * Construct a new in-memory data store for the Matrix Client.
+       * @param opts - Config options
+       */
+      constructor(opts = {}) {
+        _defineProperty(this, "rooms", {});
+        _defineProperty(this, "users", {});
+        _defineProperty(this, "syncToken", null);
+        _defineProperty(this, "filters", new MapWithDefault(() => /* @__PURE__ */ new Map()));
+        _defineProperty(this, "accountData", /* @__PURE__ */ new Map());
+        _defineProperty(this, "localStorage", void 0);
+        _defineProperty(this, "oobMembers", /* @__PURE__ */ new Map());
+        _defineProperty(this, "pendingEvents", {});
+        _defineProperty(this, "clientOptions", void 0);
+        _defineProperty(this, "pendingToDeviceBatches", []);
+        _defineProperty(this, "nextToDeviceBatchId", 0);
+        _defineProperty(this, "createUser", void 0);
+        _defineProperty(this, "userProfiles", /* @__PURE__ */ new Map());
+        _defineProperty(this, "onRoomMember", (event, state, member) => {
+          if (member.membership === KnownMembership.Invite) {
+            return;
+          }
+          const user = this.users[member.userId] || this.createUser?.(member.userId);
+          if (member.name) {
+            user.setDisplayName(member.name);
+            if (member.events.member) {
+              user.setRawDisplayName(member.events.member.getDirectionalContent().displayname);
+            }
+          }
+          if (member.events.member && member.events.member.getContent().avatar_url) {
+            user.setAvatarUrl(member.events.member.getContent().avatar_url);
+          }
+          this.users[user.userId] = user;
+        });
+        this.localStorage = opts.localStorage;
+      }
+      /**
+       * Retrieve the token to stream from.
+       * @returns The token or null.
+       */
+      getSyncToken() {
+        return this.syncToken;
+      }
+      /** @returns whether or not the database was newly created in this session. */
+      isNewlyCreated() {
+        return Promise.resolve(true);
+      }
+      /**
+       * Set the token to stream from.
+       * @param token - The token to stream from.
+       */
+      setSyncToken(token) {
+        this.syncToken = token;
+      }
+      /**
+       * Store the given room.
+       * @param room - The room to be stored. All properties must be stored.
+       */
+      storeRoom(room) {
+        this.rooms[room.roomId] = room;
+        room.currentState.on(RoomStateEvent.Members, this.onRoomMember);
+        room.currentState.getMembers().forEach((m) => {
+          this.onRoomMember(null, room.currentState, m);
+        });
+      }
+      setUserCreator(creator) {
+        this.createUser = creator;
+      }
+      /**
+       * Retrieve a room by its' room ID.
+       * @param roomId - The room ID.
+       * @returns The room or null.
+       */
+      getRoom(roomId) {
+        return this.rooms[roomId] || null;
+      }
+      /**
+       * Retrieve all known rooms.
+       * @returns A list of rooms, which may be empty.
+       */
+      getRooms() {
+        return Object.values(this.rooms);
+      }
+      /**
+       * Permanently delete a room.
+       */
+      removeRoom(roomId) {
+        if (this.rooms[roomId]) {
+          this.rooms[roomId].currentState.removeListener(RoomStateEvent.Members, this.onRoomMember);
+        }
+        delete this.rooms[roomId];
+      }
+      /**
+       * Retrieve a summary of all the rooms.
+       * @returns A summary of each room.
+       */
+      getRoomSummaries() {
+        return Object.values(this.rooms).map(function(room) {
+          return room.summary;
+        });
+      }
+      /**
+       * Store a User.
+       * @param user - The user to store.
+       */
+      storeUser(user) {
+        this.users[user.userId] = user;
+      }
+      /**
+       * Retrieve a User by its' user ID.
+       * @param userId - The user ID.
+       * @returns The user or null.
+       */
+      getUser(userId) {
+        return this.users[userId] || null;
+      }
+      /**
+       * Retrieve all known users.
+       * @returns A list of users, which may be empty.
+       */
+      getUsers() {
+        return Object.values(this.users);
+      }
+      /**
+       * Retrieve scrollback for this room.
+       * @param room - The matrix room
+       * @param limit - The max number of old events to retrieve.
+       * @returns An array of objects which will be at most 'limit'
+       * length and at least 0. The objects are the raw event JSON.
+       */
+      scrollback(room, limit) {
+        return [];
+      }
+      /**
+       * Store events for a room. The events have already been added to the timeline
+       * @param room - The room to store events for.
+       * @param events - The events to store.
+       * @param token - The token associated with these events.
+       * @param toStart - True if these are paginated results.
+       */
+      storeEvents(room, events, token, toStart) {
+      }
+      /**
+       * Store a filter.
+       */
+      storeFilter(filter) {
+        if (!filter?.userId || !filter?.filterId) return;
+        this.filters.getOrCreate(filter.userId).set(filter.filterId, filter);
+      }
+      /**
+       * Retrieve a filter.
+       * @returns A filter or null.
+       */
+      getFilter(userId, filterId) {
+        return this.filters.get(userId)?.get(filterId) || null;
+      }
+      /**
+       * Retrieve a filter ID with the given name.
+       * @param filterName - The filter name.
+       * @returns The filter ID or null.
+       */
+      getFilterIdByName(filterName) {
+        if (!this.localStorage) {
+          return null;
+        }
+        const key = "mxjssdk_memory_filter_" + filterName;
+        try {
+          const value = this.localStorage.getItem(key);
+          if (isValidFilterId(value)) {
+            return value;
+          }
+        } catch {
+        }
+        return null;
+      }
+      /**
+       * Set a filter name to ID mapping.
+       */
+      setFilterIdByName(filterName, filterId) {
+        if (!this.localStorage) {
+          return;
+        }
+        const key = "mxjssdk_memory_filter_" + filterName;
+        try {
+          if (isValidFilterId(filterId)) {
+            this.localStorage.setItem(key, filterId);
+          } else {
+            this.localStorage.removeItem(key);
+          }
+        } catch {
+        }
+      }
+      /**
+       * Store user-scoped account data events.
+       * N.B. that account data only allows a single event per type, so multiple
+       * events with the same type will replace each other.
+       * @param events - The events to store.
+       */
+      storeAccountDataEvents(events) {
+        events.forEach((event) => {
+          const isDeleted = !Object.keys(event.getContent()).length;
+          if (isDeleted) {
+            this.accountData.delete(event.getType());
+          } else {
+            this.accountData.set(event.getType(), event);
+          }
+        });
+      }
+      /**
+       * Get account data event by event type
+       * @param eventType - The event type being queried
+       * @returns the user account_data event of given type, if any
+       */
+      getAccountData(eventType) {
+        return this.accountData.get(eventType);
+      }
+      /**
+       * setSyncData does nothing as there is no backing data store.
+       *
+       * @param syncData - The sync data
+       * @returns An immediately resolved promise.
+       */
+      setSyncData(syncData) {
+        return Promise.resolve();
+      }
+      /**
+       * We never want to save becase we have nothing to save to.
+       *
+       * @returns If the store wants to save
+       */
+      wantsSave() {
+        return false;
+      }
+      /**
+       * Save does nothing as there is no backing data store.
+       * @param force - True to force a save (but the memory
+       *     store still can't save anything)
+       */
+      save(force) {
+        return Promise.resolve();
+      }
+      /**
+       * Startup does nothing as this store doesn't require starting up.
+       * @returns An immediately resolved promise.
+       */
+      startup() {
+        return Promise.resolve();
+      }
+      /**
+       * @returns Promise which resolves with a sync response to restore the
+       * client state to where it was at the last save, or null if there
+       * is no saved sync data.
+       */
+      getSavedSync() {
+        return Promise.resolve(null);
+      }
+      /**
+       * @returns If there is a saved sync, the nextBatch token
+       * for this sync, otherwise null.
+       */
+      getSavedSyncToken() {
+        return Promise.resolve(null);
+      }
+      /**
+       * Delete all data from this store.
+       * @returns An immediately resolved promise.
+       */
+      deleteAllData() {
+        this.rooms = {
+          // roomId: Room
+        };
+        this.users = {
+          // userId: User
+        };
+        this.syncToken = null;
+        this.filters = new MapWithDefault(() => /* @__PURE__ */ new Map());
+        this.accountData = /* @__PURE__ */ new Map();
+        return Promise.resolve();
+      }
+      /**
+       * Returns the out-of-band membership events for this room that
+       * were previously loaded.
+       * @returns the events, potentially an empty array if OOB loading didn't yield any new members
+       * @returns in case the members for this room haven't been stored yet
+       */
+      getOutOfBandMembers(roomId) {
+        return Promise.resolve(this.oobMembers.get(roomId) || null);
+      }
+      /**
+       * Stores the out-of-band membership events for this room. Note that
+       * it still makes sense to store an empty array as the OOB status for the room is
+       * marked as fetched, and getOutOfBandMembers will return an empty array instead of null
+       * @param membershipEvents - the membership events to store
+       * @returns when all members have been stored
+       */
+      setOutOfBandMembers(roomId, membershipEvents) {
+        this.oobMembers.set(roomId, membershipEvents);
+        return Promise.resolve();
+      }
+      clearOutOfBandMembers(roomId) {
+        this.oobMembers.delete(roomId);
+        return Promise.resolve();
+      }
+      getClientOptions() {
+        return Promise.resolve(this.clientOptions);
+      }
+      storeClientOptions(options) {
+        this.clientOptions = Object.assign({}, options);
+        return Promise.resolve();
+      }
+      async getPendingEvents(roomId) {
+        return this.pendingEvents[roomId] ?? [];
+      }
+      async setPendingEvents(roomId, events) {
+        this.pendingEvents[roomId] = events;
+      }
+      saveToDeviceBatches(batches) {
+        for (const batch of batches) {
+          this.pendingToDeviceBatches.push({
+            id: this.nextToDeviceBatchId++,
+            eventType: batch.eventType,
+            txnId: batch.txnId,
+            batch: batch.batch
+          });
+        }
+        return Promise.resolve();
+      }
+      async getOldestToDeviceBatch() {
+        if (this.pendingToDeviceBatches.length === 0) return null;
+        return this.pendingToDeviceBatches[0];
+      }
+      removeToDeviceBatch(id) {
+        this.pendingToDeviceBatches = this.pendingToDeviceBatches.filter((batch) => batch.id !== id);
+        return Promise.resolve();
+      }
+      async getUserProfile(userId) {
+        return this.userProfiles.get(userId);
+      }
+      async storeUserProfiles(userProfiles) {
+        userProfiles.forEach((profile, userId) => this.userProfiles.set(userId, profile));
+      }
+      async removeUserProfiles(userIds) {
+        userIds.forEach((userId) => this.userProfiles.delete(userId));
+      }
+      async removeEventsFromRoom(roomId, eventIds) {
+      }
+      async destroy() {
+      }
+    };
+  }
+});
+
 // node_modules/matrix-widget-api/lib/interfaces/WidgetApiDirection.js
 var require_WidgetApiDirection = __commonJS({
   "node_modules/matrix-widget-api/lib/interfaces/WidgetApiDirection.js"(exports) {
@@ -66073,248 +66439,2847 @@ var require_lib3 = __commonJS({
   }
 });
 
-// node_modules/matrix-encrypt-attachment/lib/browser-encrypt-attachment.js
-var require_browser_encrypt_attachment = __commonJS({
-  "node_modules/matrix-encrypt-attachment/lib/browser-encrypt-attachment.js"(exports, module2) {
-    (function(f) {
-      if (typeof exports === "object" && typeof module2 !== "undefined") {
-        module2.exports = f();
-      } else if (typeof define === "function" && define.amd) {
-        define([], f);
-      } else {
-        var g;
-        if (typeof window !== "undefined") {
-          g = window;
-        } else if (typeof globalThis !== "undefined") {
-          g = globalThis;
-        } else if (typeof self !== "undefined") {
-          g = self;
-        } else {
-          g = this;
-        }
-        g.MatrixEncryptAttachment = f();
-      }
-    })(function() {
-      var define2, module3, exports2;
-      return (/* @__PURE__ */ (function() {
-        function r(e, n, t) {
-          function o(i2, f) {
-            if (!n[i2]) {
-              if (!e[i2]) {
-                var c = "function" == typeof __require && __require;
-                if (!f && c) return c(i2, true);
-                if (u) return u(i2, true);
-                var a = new Error("Cannot find module '" + i2 + "'");
-                throw a.code = "MODULE_NOT_FOUND", a;
-              }
-              var p = n[i2] = { exports: {} };
-              e[i2][0].call(p.exports, function(r2) {
-                var n2 = e[i2][1][r2];
-                return o(n2 || r2);
-              }, p, p.exports, r, e, n, t);
+// node_modules/matrix-js-sdk/lib/embedded.js
+function processAndThrow(error) {
+  if (error instanceof import_matrix_widget_api.WidgetApiResponseError && error.data.matrix_api_error) {
+    throw MatrixError.fromWidgetApiErrorData(error.data.matrix_api_error);
+  } else {
+    throw error;
+  }
+}
+function timeoutToConnectionError(error) {
+  if (error instanceof Error && error.message === "Request timed out") {
+    throw new ConnectionError("widget api timeout");
+  }
+  throw error;
+}
+var import_matrix_widget_api, RoomWidgetClientEvent, RoomWidgetClient;
+var init_embedded = __esm({
+  "node_modules/matrix-js-sdk/lib/embedded.js"() {
+    init_objectSpread2();
+    init_defineProperty();
+    import_matrix_widget_api = __toESM(require_lib3(), 1);
+    init_event2();
+    init_requests();
+    init_event();
+    init_logger();
+    init_client();
+    init_sync2();
+    init_sliding_sync_sdk();
+    init_errors();
+    init_user();
+    init_utils();
+    init_matrix();
+    RoomWidgetClientEvent = /* @__PURE__ */ (function(RoomWidgetClientEvent2) {
+      RoomWidgetClientEvent2["PendingEventsChanged"] = "PendingEvent.pendingEventsChanged";
+      return RoomWidgetClientEvent2;
+    })({});
+    RoomWidgetClient = class extends MatrixClient {
+      /**
+       *
+       * @param widgetApi - The widget api to use for communication.
+       * @param capabilities - The capabilities the widget client will request.
+       * @param roomId - The room id the widget is associated with.
+       * @param opts - The configuration options for this client.
+       * @param sendContentLoaded - Whether to send a content loaded widget action immediately after initial setup.
+       *   Set to `false` if the widget uses `waitForIFrameLoad=true` (in this case the client does not expect a content loaded action at all),
+       *   or if the the widget wants to send the `ContentLoaded` action at a later point in time after the initial setup.
+       */
+      constructor(widgetApi, capabilities, _roomId, opts, sendContentLoaded) {
+        super(opts);
+        _defineProperty(this, "room", void 0);
+        _defineProperty(this, "widgetApiReady", void 0);
+        _defineProperty(this, "roomStateSynced", void 0);
+        _defineProperty(this, "lifecycle", void 0);
+        _defineProperty(this, "syncState", null);
+        _defineProperty(this, "pendingSendingEventsTxId", []);
+        _defineProperty(this, "eventEmitter", new TypedEventEmitter());
+        _defineProperty(this, "syncApiResolver", Promise.withResolvers());
+        _defineProperty(this, "updateTxId", async (event) => {
+          if (
+            // This could theoretically be an event send by this device
+            // In that case we need to update the txId of the event because the embedded client/widget
+            // knows this event with a different transaction Id than what was used by the host client.
+            event.getSender() === this.getUserId() && // We optimize by not blocking events from types that we have not send
+            // with this client.
+            this.pendingSendingEventsTxId.some((p) => event.getType() === p.type)
+          ) {
+            let matchingTxId = this.pendingSendingEventsTxId.find((p) => p.id === event.getId())?.txId;
+            while (!matchingTxId && this.pendingSendingEventsTxId.length > 0) {
+              await new Promise((resolve) => this.eventEmitter.once(RoomWidgetClientEvent.PendingEventsChanged, () => resolve()));
+              matchingTxId = this.pendingSendingEventsTxId.find((p) => p.id === event.getId())?.txId;
             }
-            return n[i2].exports;
+            if (matchingTxId) {
+              event.setTxnId(matchingTxId);
+              event.setUnsigned(_objectSpread2(_objectSpread2({}, event.getUnsigned()), {}, {
+                transaction_id: matchingTxId
+              }));
+            }
+            this.pendingSendingEventsTxId = this.pendingSendingEventsTxId.filter((p) => p.id !== event.getId());
+            if (this.pendingSendingEventsTxId.length === 0) {
+              this.eventEmitter.emit(RoomWidgetClientEvent.PendingEventsChanged);
+            }
           }
-          for (var u = "function" == typeof __require && __require, i = 0; i < t.length; i++) o(t[i]);
-          return o;
-        }
-        return r;
-      })())({ 1: [function(require2, module4, exports3) {
-        "use strict";
-        var __awaiter = this && this.__awaiter || function(thisArg, _arguments, P, generator) {
-          function adopt(value) {
-            return value instanceof P ? value : new P(function(resolve) {
-              resolve(value);
-            });
+        });
+        _defineProperty(this, "onEvent", async (ev) => {
+          ev.preventDefault();
+          if (ev.detail.data.room_id === this.roomId) {
+            const event = new MatrixEvent(ev.detail.data);
+            await this.updateTxId(event);
+            await this.syncApiResolver.promise;
+            if (this.syncApi instanceof SyncApi) {
+              if (await this.supportUpdateState()) {
+                await this.syncApi.injectRoomEvents(this.room, void 0, [], [event]);
+              } else {
+                await this.syncApi.injectRoomEvents(this.room, [], void 0, [event]);
+              }
+            } else {
+              if (await this.supportUpdateState()) {
+                await this.syncApi.injectRoomEvents(this.room, [], [event]);
+              } else {
+                logger.error("slididng sync cannot be used in widget mode if the client widget driver does not support the version: 'org.matrix.msc2762_update_state'");
+              }
+            }
+            this.emit(ClientEvent.Event, event);
+            if (event.unstableStickyInfo !== void 0) this.room._unstable_addStickyEvents([event]);
+            this.setSyncState(SyncState.Syncing);
+            logger.info(`Received event ${event.getId()} ${event.getType()}`);
+          } else {
+            const {
+              event_id: eventId,
+              room_id: roomId
+            } = ev.detail.data;
+            logger.info(`Received event ${eventId} for a different room ${roomId}; discarding`);
           }
-          return new (P || (P = Promise))(function(resolve, reject) {
-            function fulfilled(value) {
-              try {
-                step(generator.next(value));
-              } catch (e) {
-                reject(e);
-              }
-            }
-            function rejected(value) {
-              try {
-                step(generator["throw"](value));
-              } catch (e) {
-                reject(e);
-              }
-            }
-            function step(result) {
-              result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
-            }
-            step((generator = generator.apply(thisArg, _arguments || [])).next());
+          await this.ack(ev);
+        });
+        _defineProperty(this, "onToDevice", async (ev) => {
+          ev.preventDefault();
+          const event = new MatrixEvent({
+            type: ev.detail.data.type,
+            sender: ev.detail.data.sender,
+            content: ev.detail.data.content
           });
+          if (ev.detail.data.encrypted) event.makeEncrypted(EventType.RoomMessageEncrypted, {}, "", "");
+          this.emit(ClientEvent.ToDeviceEvent, event);
+          this.setSyncState(SyncState.Syncing);
+          await this.ack(ev);
+        });
+        _defineProperty(this, "onStateUpdate", async (ev) => {
+          ev.preventDefault();
+          if (!await this.supportUpdateState()) {
+            logger.warn("received update_state widget action but the widget driver did not claim to support 'org.matrix.msc2762_update_state'");
+          }
+          await this.syncApiResolver.promise;
+          for (const rawEvent of ev.detail.data.state) {
+            if (rawEvent.room_id === this.roomId) {
+              const event = new MatrixEvent(rawEvent);
+              if (this.syncApi instanceof SyncApi) {
+                await this.syncApi.injectRoomEvents(this.room, void 0, [event]);
+              } else {
+                await this.syncApi.injectRoomEvents(this.room, [event]);
+              }
+              logger.debug(`Updated state entry ${event.getType()} ${event.getStateKey()} to ${event.getId()}`);
+            } else {
+              const {
+                event_id: eventId,
+                room_id: roomId
+              } = ev.detail.data;
+              logger.info(`Received state entry ${eventId} for a different room ${roomId}; discarding`);
+            }
+          }
+          await this.ack(ev);
+        });
+        this.widgetApi = widgetApi;
+        this.capabilities = capabilities;
+        this.roomId = _roomId;
+        const transportSend = this.widgetApi.transport.send.bind(this.widgetApi.transport);
+        this.widgetApi.transport.send = async (action, data) => {
+          try {
+            return await transportSend(action, data);
+          } catch (error) {
+            processAndThrow(error);
+          }
         };
-        var __generator = this && this.__generator || function(thisArg, body) {
-          var _ = { label: 0, sent: function() {
-            if (t[0] & 1) throw t[1];
-            return t[1];
-          }, trys: [], ops: [] }, f, y, t, g;
-          return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() {
-            return this;
-          }), g;
-          function verb(n) {
-            return function(v) {
-              return step([n, v]);
+        const transportSendComplete = this.widgetApi.transport.sendComplete.bind(this.widgetApi.transport);
+        this.widgetApi.transport.sendComplete = async (action, data) => {
+          try {
+            return await transportSendComplete(action, data);
+          } catch (error) {
+            processAndThrow(error);
+          }
+        };
+        this.widgetApiReady = new Promise((resolve) => this.widgetApi.once("ready", resolve));
+        this.roomStateSynced = capabilities.receiveState?.length ? new Promise((resolve) => this.widgetApi.once(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.UpdateState}`, resolve)) : Promise.resolve();
+        this.requestInitialCapabilities(capabilities, _roomId);
+        widgetApi.on(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendEvent}`, this.onEvent);
+        widgetApi.on(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendToDevice}`, this.onToDevice);
+        widgetApi.on(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.UpdateState}`, this.onStateUpdate);
+        widgetApi.start();
+        if (sendContentLoaded) widgetApi.sendContentLoaded();
+      }
+      requestInitialCapabilities(capabilities, roomId) {
+        if (capabilities.sendEvent?.length || capabilities.receiveEvent?.length || capabilities.sendMessage === true || Array.isArray(capabilities.sendMessage) && capabilities.sendMessage.length || capabilities.receiveMessage === true || Array.isArray(capabilities.receiveMessage) && capabilities.receiveMessage.length || capabilities.sendState?.length || capabilities.receiveState?.length) {
+          this.widgetApi.requestCapabilityForRoomTimeline(roomId);
+        }
+        capabilities.sendEvent?.forEach((eventType) => this.widgetApi.requestCapabilityToSendEvent(eventType));
+        capabilities.receiveEvent?.forEach((eventType) => this.widgetApi.requestCapabilityToReceiveEvent(eventType));
+        if (capabilities.sendMessage === true) {
+          this.widgetApi.requestCapabilityToSendMessage();
+        } else if (Array.isArray(capabilities.sendMessage)) {
+          capabilities.sendMessage.forEach((msgType) => this.widgetApi.requestCapabilityToSendMessage(msgType));
+        }
+        if (capabilities.receiveMessage === true) {
+          this.widgetApi.requestCapabilityToReceiveMessage();
+        } else if (Array.isArray(capabilities.receiveMessage)) {
+          capabilities.receiveMessage.forEach((msgType) => this.widgetApi.requestCapabilityToReceiveMessage(msgType));
+        }
+        capabilities.sendState?.forEach(({
+          eventType,
+          stateKey
+        }) => this.widgetApi.requestCapabilityToSendState(eventType, stateKey));
+        capabilities.receiveState?.forEach(({
+          eventType,
+          stateKey
+        }) => this.widgetApi.requestCapabilityToReceiveState(eventType, stateKey));
+        capabilities.sendToDevice?.forEach((eventType) => this.widgetApi.requestCapabilityToSendToDevice(eventType));
+        capabilities.receiveToDevice?.forEach((eventType) => this.widgetApi.requestCapabilityToReceiveToDevice(eventType));
+        if (capabilities.sendDelayedEvents && (capabilities.sendEvent?.length || capabilities.sendMessage === true || Array.isArray(capabilities.sendMessage) && capabilities.sendMessage.length || capabilities.sendState?.length)) {
+          this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4157SendDelayedEvent);
+        }
+        if (capabilities.updateDelayedEvents) {
+          this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4157UpdateDelayedEvent);
+        }
+        if (capabilities.sendSticky) {
+          this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4407SendStickyEvent);
+        }
+        if (capabilities.receiveSticky) {
+          this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4407ReceiveStickyEvent);
+        }
+        if (capabilities.turnServers) {
+          this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC3846TurnServers);
+        }
+      }
+      async supportUpdateState() {
+        return (await this.widgetApi.getClientVersions()).includes(import_matrix_widget_api.UnstableApiVersion.MSC2762_UPDATE_STATE);
+      }
+      async startClient(opts = {}) {
+        this.lifecycle = new AbortController();
+        const userId = this.getUserId();
+        if (userId) {
+          this.store.storeUser(new User(userId));
+        }
+        if (opts.slidingSync) {
+          this.syncApi = new SlidingSyncSdk(opts.slidingSync, this, opts, this.buildSyncApiOptions());
+        } else {
+          this.syncApi = new SyncApi(this, opts, this.buildSyncApiOptions());
+        }
+        this.syncApiResolver.resolve();
+        this.room = this.syncApi.createRoom(this.roomId);
+        this.store.storeRoom(this.room);
+        await this.widgetApiReady;
+        if (await this.supportUpdateState()) {
+          await this.roomStateSynced;
+        } else {
+          await Promise.all(this.capabilities.receiveState?.map(async ({
+            eventType,
+            stateKey
+          }) => {
+            const rawEvents = await this.widgetApi.readStateEvents(eventType, void 0, stateKey, [this.roomId]);
+            const events = rawEvents.map((rawEvent) => new MatrixEvent(rawEvent));
+            if (this.syncApi instanceof SyncApi) {
+              await this.syncApi.injectRoomEvents(this.room, void 0, events);
+            } else {
+              await this.syncApi.injectRoomEvents(this.room, events);
+            }
+            events.forEach((event) => {
+              this.emit(ClientEvent.Event, event);
+              logger.info(`Backfilled event ${event.getId()} ${event.getType()} ${event.getStateKey()}`);
+            });
+          }) ?? []);
+        }
+        if (opts.clientWellKnownPollPeriod !== void 0) {
+          this.clientWellKnownIntervalID = setInterval(() => {
+            this.fetchClientWellKnown();
+          }, 1e3 * opts.clientWellKnownPollPeriod);
+          this.fetchClientWellKnown();
+        }
+        this.setSyncState(SyncState.Syncing);
+        logger.info("Finished initial sync");
+        this.matrixRTC.start();
+        if (this.capabilities.turnServers) this.watchTurnServers();
+      }
+      stopClient() {
+        this.widgetApi.off(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendEvent}`, this.onEvent);
+        this.widgetApi.off(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendToDevice}`, this.onToDevice);
+        this.widgetApi.off(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.UpdateState}`, this.onStateUpdate);
+        super.stopClient();
+        this.lifecycle.abort();
+      }
+      async joinRoom(roomIdOrAlias) {
+        if (roomIdOrAlias === this.roomId) return this.room;
+        throw new Error(`Unknown room: ${roomIdOrAlias}`);
+      }
+      async encryptAndSendEvent(room, event, delayOptsOrQuery, queryDict) {
+        let queryOpts = queryDict;
+        let delayOpts;
+        if (delayOptsOrQuery && isSendDelayedEventRequestOpts(delayOptsOrQuery)) {
+          delayOpts = delayOptsOrQuery;
+        } else if (!queryOpts) {
+          queryOpts = delayOptsOrQuery;
+        }
+        const stickyDurationMs = queryOpts?.["org.matrix.msc4354.sticky_duration_ms"];
+        if (stickyDurationMs !== void 0 && typeof stickyDurationMs !== "number") {
+          throw new Error("Sticky duration must be a number when defined");
+        }
+        const stickyDurationMsAsNumber = stickyDurationMs;
+        const content = event.event.redacts ? _objectSpread2(_objectSpread2({}, event.getContent()), {}, {
+          redacts: event.event.redacts
+        }) : event.getContent();
+        if (delayOpts) {
+          const response2 = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId, "delay" in delayOpts ? delayOpts.delay : void 0, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : void 0, stickyDurationMsAsNumber).catch(timeoutToConnectionError);
+          return this.validateSendDelayedEventResponse(response2);
+        }
+        const txId = event.getTxnId();
+        if (txId) this.pendingSendingEventsTxId.push({
+          type: event.getType(),
+          id: void 0,
+          txId
+        });
+        let response;
+        try {
+          response = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId, void 0, void 0, stickyDurationMsAsNumber).catch(timeoutToConnectionError);
+        } catch (e) {
+          this.updatePendingEventStatus(room, event, EventStatus.NOT_SENT);
+          throw e;
+        }
+        room.updatePendingEvent(event, EventStatus.SENT, response.event_id);
+        this.pendingSendingEventsTxId.forEach((p) => {
+          if (p.txId === txId) p.id = response.event_id;
+        });
+        this.eventEmitter.emit(RoomWidgetClientEvent.PendingEventsChanged);
+        return {
+          event_id: response.event_id
+        };
+      }
+      async sendStateEvent(roomId, eventType, content, stateKey = "") {
+        const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId).catch(timeoutToConnectionError);
+        if (response.event_id === void 0) {
+          throw new Error("'event_id' absent from response to an event request");
+        }
+        return {
+          event_id: response.event_id
+        };
+      }
+      /**
+       * @experimental This currently relies on an unstable MSC (MSC4140).
+       */
+      // eslint-disable-next-line
+      async _unstable_sendDelayedStateEvent(roomId, delayOpts, eventType, content, stateKey = "") {
+        if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
+          throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "sendDelayedStateEvent");
+        }
+        const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId, "delay" in delayOpts ? delayOpts.delay : void 0, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : void 0).catch(timeoutToConnectionError);
+        return this.validateSendDelayedEventResponse(response);
+      }
+      validateSendDelayedEventResponse(response) {
+        if (response.delay_id === void 0) {
+          throw new Error("'delay_id' absent from response to a delayed event request");
+        }
+        return {
+          delay_id: response.delay_id
+        };
+      }
+      /**
+       * @experimental This currently relies on an unstable MSC (MSC4140).
+       * @deprecated Instead use one of:
+       * - {@link _unstable_cancelScheduledDelayedEvent}
+       * - {@link _unstable_restartScheduledDelayedEvent}
+       * - {@link _unstable_sendScheduledDelayedEvent}
+       */
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      async _unstable_updateDelayedEvent(delayId, action) {
+        if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
+          throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "updateDelayedEvent");
+        }
+        switch (action) {
+          case UpdateDelayedEventAction.Cancel:
+            await this.widgetApi.cancelScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
+            break;
+          case UpdateDelayedEventAction.Restart:
+            await this.widgetApi.restartScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
+            break;
+          case UpdateDelayedEventAction.Send:
+            await this.widgetApi.sendScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
+            break;
+        }
+        return {};
+      }
+      /**
+       * @experimental This currently relies on an unstable MSC (MSC4140).
+       */
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      async _unstable_cancelScheduledDelayedEvent(delayId) {
+        if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
+          throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "cancelScheduledDelayedEvent");
+        }
+        await this.widgetApi.cancelScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
+        return {};
+      }
+      /**
+       * @experimental This currently relies on an unstable MSC (MSC4140).
+       */
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      async _unstable_restartScheduledDelayedEvent(delayId) {
+        if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
+          throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "restartScheduledDelayedEvent");
+        }
+        await this.widgetApi.restartScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
+        return {};
+      }
+      /**
+       * @experimental This currently relies on an unstable MSC (MSC4140).
+       */
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      async _unstable_sendScheduledDelayedEvent(delayId) {
+        if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
+          throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "sendScheduledDelayedEvent");
+        }
+        await this.widgetApi.sendScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
+        return {};
+      }
+      /**
+       * by {@link MatrixClient.encryptAndSendToDevice}.
+       */
+      async encryptAndSendToDevice(eventType, devices, payload) {
+        const contentMap = new MapWithDefault(() => /* @__PURE__ */ new Map());
+        for (const {
+          userId,
+          deviceId
+        } of devices) {
+          contentMap.getOrCreate(userId).set(deviceId, payload);
+        }
+        await this.widgetApi.sendToDevice(eventType, true, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
+      }
+      async sendToDevice(eventType, contentMap) {
+        await this.widgetApi.sendToDevice(eventType, false, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
+        return {};
+      }
+      async getOpenIdToken() {
+        const token = await this.widgetApi.requestOpenIDConnectToken().catch(timeoutToConnectionError);
+        return {
+          access_token: token.access_token,
+          expires_in: token.expires_in,
+          matrix_server_name: token.matrix_server_name,
+          token_type: token.token_type
+        };
+      }
+      async queueToDevice({
+        eventType,
+        batch
+      }) {
+        const contentMap = new MapWithDefault(() => /* @__PURE__ */ new Map());
+        for (const {
+          userId,
+          deviceId,
+          payload
+        } of batch) {
+          contentMap.getOrCreate(userId).set(deviceId, payload);
+        }
+        await this.widgetApi.sendToDevice(eventType, false, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
+      }
+      /**
+       * Send an event to a specific list of devices via the widget API. Optionally encrypts the event.
+       *
+       * If you are using a full MatrixClient you would be calling {@link MatrixClient.getCrypto().encryptToDeviceMessages()} followed
+       * by {@link MatrixClient.queueToDevice}.
+       *
+       * However, this is combined into a single step when running as an embedded widget client. So, we expose this method for those
+       * that need it.
+       *
+       * @param eventType - Type of the event to send.
+       * @param encrypted - Whether the event should be encrypted.
+       * @param contentMap - The content to send. Map from user_id to device_id to content object.
+       */
+      async sendToDeviceViaWidgetApi(eventType, encrypted, contentMap) {
+        await this.widgetApi.sendToDevice(eventType, encrypted, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
+      }
+      // Overridden since we get TURN servers automatically over the widget API,
+      // and this method would otherwise complain about missing an access token
+      async checkTurnServers() {
+        return this.turnServers.length > 0;
+      }
+      // Overridden since we 'sync' manually without the sync API
+      getSyncState() {
+        return this.syncState;
+      }
+      setSyncState(state) {
+        const oldState = this.syncState;
+        this.syncState = state;
+        this.emit(ClientEvent.Sync, state, oldState);
+      }
+      async ack(ev) {
+        this.widgetApi.transport.reply(ev.detail, {});
+      }
+      async watchTurnServers() {
+        const servers = this.widgetApi.getTurnServers();
+        const onClientStopped = () => {
+          servers.return(void 0);
+        };
+        this.lifecycle.signal.addEventListener("abort", onClientStopped);
+        try {
+          for await (const server of servers) {
+            this.turnServers = [{
+              urls: server.uris,
+              username: server.username,
+              credential: server.password
+            }];
+            this.emit(ClientEvent.TurnServers, this.turnServers);
+            logger.log(`Received TURN server: ${server.uris}`);
+          }
+        } catch (e) {
+          logger.warn("Error watching TURN servers", e);
+        } finally {
+          this.lifecycle.signal.removeEventListener("abort", onClientStopped);
+        }
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/receipt-accumulator.js
+var ReceiptAccumulator;
+var init_receipt_accumulator = __esm({
+  "node_modules/matrix-js-sdk/lib/receipt-accumulator.js"() {
+    init_defineProperty();
+    init_event();
+    init_utils();
+    ReceiptAccumulator = class {
+      constructor() {
+        _defineProperty(this, "unthreadedReadReceipts", /* @__PURE__ */ new Map());
+        _defineProperty(this, "threadedReadReceipts", new MapWithDefault(() => /* @__PURE__ */ new Map()));
+      }
+      /**
+       * Provide an unthreaded receipt for this user. Overwrites any other
+       * unthreaded receipt we have for this user.
+       */
+      setUnthreaded(userId, receipt) {
+        this.unthreadedReadReceipts.set(userId, receipt);
+      }
+      /**
+       * Provide a receipt for this user in this thread. Overwrites any other
+       * receipt we have for this user in this thread.
+       */
+      setThreaded(threadId, userId, receipt) {
+        this.threadedReadReceipts.getOrCreate(threadId).set(userId, receipt);
+      }
+      /**
+       * @returns an iterator of pairs of [userId, AccumulatedReceipt] - all the
+       *          most recently-received unthreaded receipts for each user.
+       * @yields pairs of [userId, AccumulatedReceipt]
+       */
+      allUnthreaded() {
+        return this.unthreadedReadReceipts.entries();
+      }
+      /**
+       * @returns an iterator of pairs of [userId, AccumulatedReceipt] - all the
+       *          most recently-received threaded receipts for each user, in all
+       *          threads.
+       * @yields pairs of [userId, AccumulatedReceipt]
+       */
+      *allThreaded() {
+        for (const receiptsForThread of this.threadedReadReceipts.values()) {
+          for (const e of receiptsForThread.entries()) {
+            yield e;
+          }
+        }
+      }
+      /**
+       * Given a list of ephemeral events, find the receipts and store the
+       * relevant ones to be returned later from buildAccumulatedReceiptEvent().
+       */
+      consumeEphemeralEvents(events) {
+        events?.forEach((e) => {
+          if (e.type !== EventType.Receipt || !e.content) {
+            return;
+          }
+          Object.keys(e.content).forEach((eventId) => {
+            Object.entries(e.content[eventId]).forEach(([key, value]) => {
+              if (!isSupportedReceiptType(key)) return;
+              for (const userId of Object.keys(value)) {
+                const data = e.content[eventId][key][userId];
+                const receipt = {
+                  data: e.content[eventId][key][userId],
+                  type: key,
+                  eventId
+                };
+                if (!data.thread_id) {
+                  this.setUnthreaded(userId, receipt);
+                } else {
+                  this.setThreaded(data.thread_id, userId, receipt);
+                }
+              }
+            });
+          });
+        });
+      }
+      /**
+       * Build a receipt event that contains all relevant information for this
+       * room, taking the most recently received receipt for each user in an
+       * unthreaded context, and in each thread.
+       */
+      buildAccumulatedReceiptEvent(roomId) {
+        const receiptEvent = {
+          type: EventType.Receipt,
+          room_id: roomId,
+          content: {
+            // $event_id: { "m.read": { $user_id: $json } }
+          }
+        };
+        const receiptEventContent = new MapWithDefault(() => new MapWithDefault(() => /* @__PURE__ */ new Map()));
+        for (const [userId, receiptData] of this.allUnthreaded()) {
+          receiptEventContent.getOrCreate(receiptData.eventId).getOrCreate(receiptData.type).set(userId, receiptData.data);
+        }
+        for (const [userId, receiptData] of this.allThreaded()) {
+          receiptEventContent.getOrCreate(receiptData.eventId).getOrCreate(receiptData.type).set(userId, receiptData.data);
+        }
+        receiptEvent.content = recursiveMapToObject(receiptEventContent);
+        return receiptEventContent.size > 0 ? receiptEvent : null;
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/sync-accumulator.js
+function isTaggedEvent(event) {
+  return "_localTs" in event && event["_localTs"] !== void 0;
+}
+function setState(eventMap, event) {
+  if (event.state_key === null || event.state_key === void 0 || !event.type) {
+    return;
+  }
+  if (!eventMap[event.type]) {
+    eventMap[event.type] = /* @__PURE__ */ Object.create(null);
+  }
+  eventMap[event.type][event.state_key] = event;
+}
+var Category, SyncAccumulator;
+var init_sync_accumulator = __esm({
+  "node_modules/matrix-js-sdk/lib/sync-accumulator.js"() {
+    init_defineProperty();
+    init_logger();
+    init_utils();
+    init_event2();
+    init_sync();
+    init_receipt_accumulator();
+    Category = /* @__PURE__ */ (function(Category2) {
+      Category2["Invite"] = "invite";
+      Category2["Leave"] = "leave";
+      Category2["Join"] = "join";
+      Category2["Knock"] = "knock";
+      return Category2;
+    })({});
+    SyncAccumulator = class {
+      constructor(opts = {}) {
+        _defineProperty(this, "accountData", {});
+        _defineProperty(this, "inviteRooms", {});
+        _defineProperty(this, "knockRooms", {});
+        _defineProperty(this, "joinRooms", {});
+        _defineProperty(this, "nextBatch", null);
+        this.opts = opts;
+        this.opts.maxTimelineEntries = this.opts.maxTimelineEntries || 50;
+      }
+      accumulate(syncResponse, fromDatabase = false) {
+        this.accumulateRooms(syncResponse, fromDatabase);
+        this.accumulateAccountData(syncResponse);
+        this.nextBatch = syncResponse.next_batch;
+      }
+      accumulateAccountData(syncResponse) {
+        if (!syncResponse.account_data || !syncResponse.account_data.events) {
+          return;
+        }
+        syncResponse.account_data.events.forEach((e) => {
+          this.accountData[e.type] = e;
+        });
+      }
+      /**
+       * Accumulate incremental /sync room data.
+       * @param syncResponse - the complete /sync JSON
+       * @param fromDatabase - True if the sync response is one saved to the database
+       */
+      accumulateRooms(syncResponse, fromDatabase = false) {
+        if (!syncResponse.rooms) {
+          return;
+        }
+        if (syncResponse.rooms.invite) {
+          Object.keys(syncResponse.rooms.invite).forEach((roomId) => {
+            this.accumulateRoom(roomId, Category.Invite, syncResponse.rooms.invite[roomId], fromDatabase);
+          });
+        }
+        if (syncResponse.rooms.join) {
+          Object.keys(syncResponse.rooms.join).forEach((roomId) => {
+            this.accumulateRoom(roomId, Category.Join, syncResponse.rooms.join[roomId], fromDatabase);
+          });
+        }
+        if (syncResponse.rooms.leave) {
+          Object.keys(syncResponse.rooms.leave).forEach((roomId) => {
+            this.accumulateRoom(roomId, Category.Leave, syncResponse.rooms.leave[roomId], fromDatabase);
+          });
+        }
+        if (syncResponse.rooms.knock) {
+          Object.keys(syncResponse.rooms.knock).forEach((roomId) => {
+            this.accumulateRoom(roomId, Category.Knock, syncResponse.rooms.knock[roomId], fromDatabase);
+          });
+        }
+      }
+      accumulateRoom(roomId, category, data, fromDatabase = false) {
+        switch (category) {
+          case Category.Invite:
+            if (this.knockRooms[roomId]) {
+              delete this.knockRooms[roomId];
+            }
+            this.accumulateInviteState(roomId, data);
+            break;
+          case Category.Knock:
+            this.accumulateKnockState(roomId, data);
+            break;
+          case Category.Join:
+            if (this.knockRooms[roomId]) {
+              delete this.knockRooms[roomId];
+            } else if (this.inviteRooms[roomId]) {
+              delete this.inviteRooms[roomId];
+            }
+            this.accumulateJoinState(roomId, data, fromDatabase);
+            break;
+          case Category.Leave:
+            if (this.knockRooms[roomId]) {
+              delete this.knockRooms[roomId];
+            } else if (this.inviteRooms[roomId]) {
+              delete this.inviteRooms[roomId];
+            } else {
+              delete this.joinRooms[roomId];
+            }
+            break;
+          default:
+            logger.error("Unknown cateogory: ", category);
+        }
+      }
+      accumulateInviteState(roomId, data) {
+        if (!data.invite_state || !data.invite_state.events) {
+          return;
+        }
+        if (!this.inviteRooms[roomId]) {
+          this.inviteRooms[roomId] = {
+            invite_state: data.invite_state
+          };
+          return;
+        }
+        const currentData = this.inviteRooms[roomId];
+        data.invite_state.events.forEach((e) => {
+          let hasAdded = false;
+          for (let i = 0; i < currentData.invite_state.events.length; i++) {
+            const current = currentData.invite_state.events[i];
+            if (current.type === e.type && current.state_key == e.state_key) {
+              currentData.invite_state.events[i] = e;
+              hasAdded = true;
+            }
+          }
+          if (!hasAdded) {
+            currentData.invite_state.events.push(e);
+          }
+        });
+      }
+      accumulateKnockState(roomId, data) {
+        if (!data.knock_state || !data.knock_state.events) {
+          return;
+        }
+        if (!this.knockRooms[roomId]) {
+          this.knockRooms[roomId] = {
+            knock_state: data.knock_state
+          };
+          return;
+        }
+        const currentData = this.knockRooms[roomId];
+        data.knock_state.events.forEach((e) => {
+          let hasAdded = false;
+          for (let i = 0; i < currentData.knock_state.events.length; i++) {
+            const current = currentData.knock_state.events[i];
+            if (current.type === e.type && current.state_key == e.state_key) {
+              currentData.knock_state.events[i] = e;
+              hasAdded = true;
+            }
+          }
+          if (!hasAdded) {
+            currentData.knock_state.events.push(e);
+          }
+        });
+      }
+      // Accumulate timeline and state events in a room.
+      accumulateJoinState(roomId, data, fromDatabase = false) {
+        const now = Date.now();
+        if (!this.joinRooms[roomId]) {
+          this.joinRooms[roomId] = {
+            _currentState: /* @__PURE__ */ Object.create(null),
+            _timeline: [],
+            _accountData: /* @__PURE__ */ Object.create(null),
+            _unreadNotifications: {},
+            _unreadThreadNotifications: {},
+            _summary: {},
+            _receipts: new ReceiptAccumulator(),
+            _stickyEvents: []
+          };
+        }
+        const currentData = this.joinRooms[roomId];
+        if (data.account_data && data.account_data.events) {
+          data.account_data.events.forEach((e) => {
+            currentData._accountData[e.type] = e;
+          });
+        }
+        if (data.unread_notifications) {
+          currentData._unreadNotifications = data.unread_notifications;
+        }
+        currentData._unreadThreadNotifications = data[UNREAD_THREAD_NOTIFICATIONS.stable] ?? data[UNREAD_THREAD_NOTIFICATIONS.unstable] ?? void 0;
+        if (data.summary) {
+          const HEROES_KEY = "m.heroes";
+          const INVITED_COUNT_KEY = "m.invited_member_count";
+          const JOINED_COUNT_KEY = "m.joined_member_count";
+          const acc = currentData._summary;
+          const sum = data.summary;
+          acc[HEROES_KEY] = sum[HEROES_KEY] ?? acc[HEROES_KEY];
+          acc[JOINED_COUNT_KEY] = sum[JOINED_COUNT_KEY] ?? acc[JOINED_COUNT_KEY];
+          acc[INVITED_COUNT_KEY] = sum[INVITED_COUNT_KEY] ?? acc[INVITED_COUNT_KEY];
+        }
+        currentData._receipts.consumeEphemeralEvents(data.ephemeral?.events);
+        if (data.timeline && data.timeline.limited) {
+          currentData._timeline = [];
+        }
+        data.state?.events?.forEach((e) => {
+          setState(currentData._currentState, e);
+        });
+        data["org.matrix.msc4222.state_after"]?.events?.forEach((e) => {
+          setState(currentData._currentState, e);
+        });
+        data.timeline?.events?.forEach((e, index) => {
+          if (!data["org.matrix.msc4222.state_after"]) {
+            setState(currentData._currentState, e);
+          }
+          let transformedEvent;
+          if (!fromDatabase) {
+            transformedEvent = Object.assign({}, e);
+            if (transformedEvent.unsigned !== void 0) {
+              transformedEvent.unsigned = Object.assign({}, transformedEvent.unsigned);
+            }
+            const age = e.unsigned?.age;
+            if (age !== void 0) transformedEvent._localTs = Date.now() - age;
+          } else {
+            transformedEvent = e;
+          }
+          currentData._timeline.push({
+            event: transformedEvent,
+            token: index === 0 ? data.timeline.prev_batch ?? null : null
+          });
+        });
+        currentData._stickyEvents = currentData._stickyEvents.filter(({
+          expiresTs
+        }) => expiresTs > now);
+        if (data.msc4354_sticky?.events) {
+          currentData._stickyEvents = currentData._stickyEvents.concat(data.msc4354_sticky.events.map((event) => {
+            const cappedDuration = Math.min(event.msc4354_sticky.duration_ms, MAX_STICKY_DURATION_MS);
+            const createdTs = Math.min(event.origin_server_ts, now);
+            return {
+              event,
+              expiresTs: cappedDuration + createdTs
+            };
+          }));
+        }
+        if (currentData._timeline.length > this.opts.maxTimelineEntries) {
+          const startIndex = currentData._timeline.length - this.opts.maxTimelineEntries;
+          for (let i = startIndex; i < currentData._timeline.length; i++) {
+            if (currentData._timeline[i].token) {
+              currentData._timeline = currentData._timeline.slice(i, currentData._timeline.length);
+              break;
+            }
+          }
+        }
+      }
+      /**
+       * Return everything under the 'rooms' key from a /sync response which
+       * represents all room data that should be stored. This should be paired
+       * with the sync token which represents the most recent /sync response
+       * provided to accumulate().
+       * @param forDatabase - True to generate a sync to be saved to storage
+       * @returns An object with a "nextBatch", "roomsData" and "accountData"
+       * keys.
+       * The "nextBatch" key is a string which represents at what point in the
+       * /sync stream the accumulator reached. This token should be used when
+       * restarting a /sync stream at startup. Failure to do so can lead to missing
+       * events. The "roomsData" key is an Object which represents the entire
+       * /sync response from the 'rooms' key onwards. The "accountData" key is
+       * a list of raw events which represent global account data.
+       */
+      getJSON(forDatabase = false) {
+        const data = {
+          join: {},
+          invite: {},
+          knock: {},
+          // always empty. This is set by /sync when a room was previously
+          // in 'invite' or 'join'. On fresh startup, the client won't know
+          // about any previous room being in 'invite' or 'join' so we can
+          // just omit mentioning it at all, even if it has previously come
+          // down /sync.
+          // The notable exception is when a client is kicked or banned:
+          // we may want to hold onto that room so the client can clearly see
+          // why their room has disappeared. We don't persist it though because
+          // it is unclear *when* we can safely remove the room from the DB.
+          // Instead, we assume that if you're loading from the DB, you've
+          // refreshed the page, which means you've seen the kick/ban already.
+          leave: {}
+        };
+        Object.keys(this.inviteRooms).forEach((roomId) => {
+          data.invite[roomId] = this.inviteRooms[roomId];
+        });
+        Object.keys(this.knockRooms).forEach((roomId) => {
+          data.knock[roomId] = this.knockRooms[roomId];
+        });
+        Object.keys(this.joinRooms).forEach((roomId) => {
+          const roomData = this.joinRooms[roomId];
+          const roomJson = {
+            "ephemeral": {
+              events: []
+            },
+            "account_data": {
+              events: []
+            },
+            "state": {
+              events: []
+            },
+            "org.matrix.msc4222.state_after": {
+              events: []
+            },
+            "timeline": {
+              events: [],
+              prev_batch: null
+            },
+            "unread_notifications": roomData._unreadNotifications,
+            "unread_thread_notifications": roomData._unreadThreadNotifications,
+            "summary": roomData._summary,
+            "msc4354_sticky": roomData._stickyEvents?.length ? {
+              events: roomData._stickyEvents.map((e) => e.event)
+            } : void 0
+          };
+          Object.keys(roomData._accountData).forEach((evType) => {
+            roomJson.account_data.events.push(roomData._accountData[evType]);
+          });
+          const receiptEvent = roomData._receipts.buildAccumulatedReceiptEvent(roomId);
+          if (receiptEvent) {
+            roomJson.ephemeral.events.push(receiptEvent);
+          }
+          roomData._timeline.forEach((msgData) => {
+            if (!roomJson.timeline.prev_batch) {
+              if (!msgData.token) {
+                return;
+              }
+              roomJson.timeline.prev_batch = msgData.token;
+            }
+            let transformedEvent;
+            if (!forDatabase && isTaggedEvent(msgData.event)) {
+              transformedEvent = Object.assign({}, msgData.event);
+              if (transformedEvent.unsigned !== void 0) {
+                transformedEvent.unsigned = Object.assign({}, transformedEvent.unsigned);
+              }
+              delete transformedEvent._localTs;
+              transformedEvent.unsigned = transformedEvent.unsigned || {};
+              transformedEvent.unsigned.age = Date.now() - msgData.event._localTs;
+            } else {
+              transformedEvent = msgData.event;
+            }
+            roomJson.timeline.events.push(transformedEvent);
+          });
+          const rollBackState = /* @__PURE__ */ Object.create(null);
+          for (let i = roomJson.timeline.events.length - 1; i >= 0; i--) {
+            const timelineEvent = roomJson.timeline.events[i];
+            if (timelineEvent.state_key === null || timelineEvent.state_key === void 0) {
+              continue;
+            }
+            const prevStateEvent = deepCopy(timelineEvent);
+            if (prevStateEvent.unsigned) {
+              if (prevStateEvent.unsigned.prev_content) {
+                prevStateEvent.content = prevStateEvent.unsigned.prev_content;
+              }
+              if (prevStateEvent.unsigned.prev_sender) {
+                prevStateEvent.sender = prevStateEvent.unsigned.prev_sender;
+              }
+            }
+            setState(rollBackState, prevStateEvent);
+          }
+          Object.keys(roomData._currentState).forEach((evType) => {
+            Object.keys(roomData._currentState[evType]).forEach((stateKey) => {
+              let ev = roomData._currentState[evType][stateKey];
+              roomJson["org.matrix.msc4222.state_after"].events.push(ev);
+              if (rollBackState[evType] && rollBackState[evType][stateKey]) {
+                ev = rollBackState[evType][stateKey];
+              }
+              roomJson.state.events.push(ev);
+            });
+          });
+          data.join[roomId] = roomJson;
+        });
+        const accData = [];
+        Object.keys(this.accountData).forEach((evType) => {
+          accData.push(this.accountData[evType]);
+        });
+        return {
+          nextBatch: this.nextBatch,
+          roomsData: data,
+          accountData: accData
+        };
+      }
+      getNextBatchToken() {
+        return this.nextBatch;
+      }
+      removeEventsFromRoom(roomId, eventIds) {
+        this.joinRooms[roomId]._timeline = this.joinRooms[roomId]._timeline.filter((ev) => !eventIds.includes(ev.event.event_id));
+        this.joinRooms[roomId]._stickyEvents = this.joinRooms[roomId]._stickyEvents.filter((ev) => !eventIds.includes(ev.event.event_id));
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/timeline-window.js
+var DEBUG3, debuglog4, DEFAULT_PAGINATE_LOOP_LIMIT, TimelineWindow, TimelineIndex;
+var init_timeline_window = __esm({
+  "node_modules/matrix-js-sdk/lib/timeline-window.js"() {
+    init_defineProperty();
+    init_event_timeline();
+    init_logger();
+    init_room();
+    DEBUG3 = false;
+    debuglog4 = DEBUG3 ? logger.log.bind(logger) : function() {
+    };
+    DEFAULT_PAGINATE_LOOP_LIMIT = 10;
+    TimelineWindow = class {
+      /**
+       * Construct a TimelineWindow.
+       *
+       * <p>This abstracts the separate timelines in a Matrix {@link Room} into a single iterable thing.
+       * It keeps track of the start and endpoints of the window, which can be advanced with the help
+       * of pagination requests.
+       *
+       * <p>Before the window is useful, it must be initialised by calling {@link TimelineWindow#load}.
+       *
+       * <p>Note that the window will not automatically extend itself when new events
+       * are received from /sync; you should arrange to call {@link TimelineWindow#paginate}
+       * on {@link RoomEvent.Timeline} events.
+       *
+       * <p>Note that constructing an instance of this class for a room adds a
+       * listener for RoomEvent.Timeline events which is never removed. In theory
+       * this should not cause a leak since the EventEmitter uses weak mappings.
+       *
+       * @param client -   MatrixClient to be used for context/pagination
+       *   requests.
+       *
+       * @param timelineSet -  The timelineSet to track
+       *
+       * @param opts - Configuration options for this window
+       */
+      constructor(client, timelineSet, opts = {}) {
+        _defineProperty(this, "windowLimit", void 0);
+        _defineProperty(this, "start", void 0);
+        _defineProperty(this, "end", void 0);
+        _defineProperty(this, "eventCount", 0);
+        this.client = client;
+        this.timelineSet = timelineSet;
+        this.windowLimit = opts.windowLimit || 1e3;
+        timelineSet.room?.on(RoomEvent.Timeline, this.onTimelineEvent.bind(this));
+      }
+      /**
+       * Initialise the window to point at a given event, or the live timeline
+       *
+       * @param initialEventId -   If given, the window will contain the
+       *    given event
+       * @param initialWindowSize -   Size of the initial window
+       */
+      load(initialEventId, initialWindowSize = 20) {
+        const initFields = (timeline) => {
+          if (!timeline) {
+            throw new Error("No timeline given to initFields");
+          }
+          let eventIndex;
+          const events = timeline.getEvents();
+          if (!initialEventId) {
+            eventIndex = events.length;
+          } else {
+            eventIndex = events.findIndex((e) => e.getId() === initialEventId);
+            if (eventIndex < 0) {
+              throw new Error("getEventTimeline result didn't include requested event");
+            }
+          }
+          const endIndex = Math.min(events.length, eventIndex + Math.ceil(initialWindowSize / 2));
+          const startIndex = Math.max(0, endIndex - initialWindowSize);
+          this.start = new TimelineIndex(timeline, startIndex - timeline.getBaseIndex());
+          this.end = new TimelineIndex(timeline, endIndex - timeline.getBaseIndex());
+          this.eventCount = endIndex - startIndex;
+        };
+        if (this.timelineSet.getTimelineForEvent(initialEventId)) {
+          initFields(this.timelineSet.getTimelineForEvent(initialEventId));
+          return Promise.resolve();
+        } else if (initialEventId) {
+          return this.client.getEventTimeline(this.timelineSet, initialEventId).then(initFields);
+        } else {
+          initFields(this.timelineSet.getLiveTimeline());
+          return Promise.resolve();
+        }
+      }
+      /**
+       * Get the TimelineIndex of the window in the given direction.
+       *
+       * @param direction -   EventTimeline.BACKWARDS to get the TimelineIndex
+       * at the start of the window; EventTimeline.FORWARDS to get the TimelineIndex at
+       * the end.
+       *
+       * @returns The requested timeline index if one exists, null
+       * otherwise.
+       */
+      getTimelineIndex(direction) {
+        if (direction == EventTimeline.BACKWARDS) {
+          return this.start ?? null;
+        } else if (direction == EventTimeline.FORWARDS) {
+          return this.end ?? null;
+        } else {
+          throw new Error("Invalid direction '" + direction + "'");
+        }
+      }
+      /**
+       * Try to extend the window using events that are already in the underlying
+       * TimelineIndex.
+       *
+       * @param direction -   EventTimeline.BACKWARDS to try extending it
+       *   backwards; EventTimeline.FORWARDS to try extending it forwards.
+       * @param size -   number of events to try to extend by.
+       *
+       * @returns true if the window was extended, false otherwise.
+       */
+      extend(direction, size) {
+        const tl = this.getTimelineIndex(direction);
+        if (!tl) {
+          debuglog4("TimelineWindow: no timeline yet");
+          return false;
+        }
+        const count2 = direction == EventTimeline.BACKWARDS ? tl.retreat(size) : tl.advance(size);
+        if (count2) {
+          this.eventCount += count2;
+          debuglog4("TimelineWindow: increased cap by " + count2 + " (now " + this.eventCount + ")");
+          const excess = this.eventCount - this.windowLimit;
+          if (excess > 0) {
+            this.unpaginate(excess, direction != EventTimeline.BACKWARDS);
+          }
+          return true;
+        }
+        return false;
+      }
+      onTimelineEvent(_event, _room, _atStart, removed) {
+        if (removed) {
+          this.onEventRemoved();
+        }
+      }
+      /**
+       * If an event was removed, meaning this window is longer than the timeline,
+       * shorten the window.
+       */
+      onEventRemoved() {
+        const events = this.getEvents();
+        if (events.length > 0 && events[events.length - 1] === void 0 && this.end) {
+          this.end.index--;
+        }
+      }
+      /**
+       * Check if this window can be extended
+       *
+       * <p>This returns true if we either have more events, or if we have a
+       * pagination token which means we can paginate in that direction. It does not
+       * necessarily mean that there are more events available in that direction at
+       * this time.
+       *
+       * @param direction -   EventTimeline.BACKWARDS to check if we can
+       *   paginate backwards; EventTimeline.FORWARDS to check if we can go forwards
+       *
+       * @returns true if we can paginate in the given direction
+       */
+      canPaginate(direction) {
+        const tl = this.getTimelineIndex(direction);
+        if (!tl) {
+          debuglog4("TimelineWindow: no timeline yet");
+          return false;
+        }
+        if (direction == EventTimeline.BACKWARDS) {
+          if (tl.index > tl.minIndex()) {
+            return true;
+          }
+        } else {
+          if (tl.index < tl.maxIndex()) {
+            return true;
+          }
+        }
+        const hasNeighbouringTimeline = tl.timeline.getNeighbouringTimeline(direction);
+        const paginationToken = tl.timeline.getPaginationToken(direction);
+        return Boolean(hasNeighbouringTimeline) || Boolean(paginationToken);
+      }
+      /**
+       * Attempt to extend the window
+       *
+       * @param direction -   EventTimeline.BACKWARDS to extend the window
+       *    backwards (towards older events); EventTimeline.FORWARDS to go forwards.
+       *
+       * @param size -   number of events to try to extend by. If fewer than this
+       *    number are immediately available, then we return immediately rather than
+       *    making an API call.
+       *
+       * @param makeRequest - whether we should make API calls to
+       *    fetch further events if we don't have any at all. (This has no effect if
+       *    the room already knows about additional events in the relevant direction,
+       *    even if there are fewer than 'size' of them, as we will just return those
+       *    we already know about.)
+       *
+       * @param requestLimit - limit for the number of API requests we
+       *    should make.
+       *
+       * @returns Promise which resolves to a boolean which is true if more events
+       *    were successfully retrieved.
+       */
+      async paginate(direction, size, makeRequest = true, requestLimit = DEFAULT_PAGINATE_LOOP_LIMIT) {
+        const tl = this.getTimelineIndex(direction);
+        if (!tl) {
+          debuglog4("TimelineWindow: no timeline yet");
+          return false;
+        }
+        if (tl.pendingPaginate) {
+          return tl.pendingPaginate;
+        }
+        if (this.extend(direction, size)) {
+          return true;
+        }
+        if (!makeRequest || requestLimit === 0) {
+          return false;
+        }
+        const token = tl.timeline.getPaginationToken(direction);
+        if (!token) {
+          debuglog4("TimelineWindow: no token");
+          return false;
+        }
+        debuglog4("TimelineWindow: starting request");
+        const prom = this.client.paginateEventTimeline(tl.timeline, {
+          backwards: direction == EventTimeline.BACKWARDS,
+          limit: size
+        }).finally(function() {
+          tl.pendingPaginate = void 0;
+        }).then((r) => {
+          debuglog4("TimelineWindow: request completed with result " + r);
+          if (!r) {
+            return this.paginate(direction, size, false, 0);
+          }
+          return this.paginate(direction, size, true, requestLimit - 1);
+        });
+        tl.pendingPaginate = prom;
+        return prom;
+      }
+      /**
+       * Remove `delta` events from the start or end of the timeline.
+       *
+       * @param delta - number of events to remove from the timeline
+       * @param startOfTimeline - if events should be removed from the start
+       *     of the timeline.
+       */
+      unpaginate(delta, startOfTimeline) {
+        const tl = startOfTimeline ? this.start : this.end;
+        if (!tl) {
+          throw new Error(`Attempting to unpaginate startOfTimeline=${startOfTimeline} but don't have this direction`);
+        }
+        if (delta > this.eventCount || delta < 0) {
+          throw new Error(`Attemting to unpaginate ${delta} events, but only have ${this.eventCount} in the timeline`);
+        }
+        while (delta > 0) {
+          const count2 = startOfTimeline ? tl.advance(delta) : tl.retreat(delta);
+          if (count2 <= 0) {
+            throw new Error("Unable to unpaginate any further, but still have " + this.eventCount + " events");
+          }
+          delta -= count2;
+          this.eventCount -= count2;
+          debuglog4("TimelineWindow.unpaginate: dropped " + count2 + " (now " + this.eventCount + ")");
+        }
+      }
+      /**
+       * Get a list of the events currently in the window
+       *
+       * @returns the events in the window
+       */
+      getEvents() {
+        if (!this.start) {
+          return [];
+        }
+        const result = [];
+        let timeline = this.start.timeline;
+        while (timeline) {
+          const events = timeline.getEvents();
+          let startIndex = 0;
+          let endIndex = events.length;
+          if (timeline === this.start.timeline) {
+            startIndex = this.start.index + timeline.getBaseIndex();
+          }
+          if (timeline === this.end?.timeline) {
+            endIndex = this.end.index + timeline.getBaseIndex();
+          }
+          for (let i = startIndex; i < endIndex; i++) {
+            result.push(events[i]);
+          }
+          if (timeline === this.end?.timeline) {
+            break;
+          } else {
+            timeline = timeline.getNeighbouringTimeline(EventTimeline.FORWARDS);
+          }
+        }
+        return result;
+      }
+    };
+    TimelineIndex = class {
+      // index: the indexes are relative to BaseIndex, so could well be negative.
+      constructor(timeline, index) {
+        _defineProperty(this, "pendingPaginate", void 0);
+        this.timeline = timeline;
+        this.index = index;
+      }
+      /**
+       * @returns the minimum possible value for the index in the current
+       *    timeline
+       */
+      minIndex() {
+        return this.timeline.getBaseIndex() * -1;
+      }
+      /**
+       * @returns the maximum possible value for the index in the current
+       *    timeline (exclusive - ie, it actually returns one more than the index
+       *    of the last element).
+       */
+      maxIndex() {
+        return this.timeline.getEvents().length - this.timeline.getBaseIndex();
+      }
+      /**
+       * Try move the index forward, or into the neighbouring timeline
+       *
+       * @param delta -  number of events to advance by
+       * @returns number of events successfully advanced by
+       */
+      advance(delta) {
+        if (!delta) {
+          return 0;
+        }
+        let cappedDelta;
+        if (delta < 0) {
+          cappedDelta = Math.max(delta, this.minIndex() - this.index);
+          if (cappedDelta < 0) {
+            this.index += cappedDelta;
+            return cappedDelta;
+          }
+        } else {
+          cappedDelta = Math.min(delta, this.maxIndex() - this.index);
+          if (cappedDelta > 0) {
+            this.index += cappedDelta;
+            return cappedDelta;
+          }
+        }
+        const neighbour = this.timeline.getNeighbouringTimeline(delta < 0 ? EventTimeline.BACKWARDS : EventTimeline.FORWARDS);
+        if (neighbour) {
+          this.timeline = neighbour;
+          if (delta < 0) {
+            this.index = this.maxIndex();
+          } else {
+            this.index = this.minIndex();
+          }
+          debuglog4("paginate: switched to new neighbour");
+          return this.advance(delta);
+        }
+        return 0;
+      }
+      /**
+       * Try move the index backwards, or into the neighbouring timeline
+       *
+       * @param delta -  number of events to retreat by
+       * @returns number of events successfully retreated by
+       */
+      retreat(delta) {
+        return this.advance(delta * -1) * -1;
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/interactive-auth.js
+var EMAIL_STAGE_TYPE, MSISDN_STAGE_TYPE, AuthType, NoAuthFlowFoundError, InteractiveAuth;
+var init_interactive_auth = __esm({
+  "node_modules/matrix-js-sdk/lib/interactive-auth.js"() {
+    init_defineProperty();
+    init_logger();
+    init_http_api();
+    EMAIL_STAGE_TYPE = "m.login.email.identity";
+    MSISDN_STAGE_TYPE = "m.login.msisdn";
+    AuthType = /* @__PURE__ */ (function(AuthType2) {
+      AuthType2["Password"] = "m.login.password";
+      AuthType2["Recaptcha"] = "m.login.recaptcha";
+      AuthType2["Terms"] = "m.login.terms";
+      AuthType2["Email"] = "m.login.email.identity";
+      AuthType2["Msisdn"] = "m.login.msisdn";
+      AuthType2["Sso"] = "m.login.sso";
+      AuthType2["SsoUnstable"] = "org.matrix.login.sso";
+      AuthType2["Dummy"] = "m.login.dummy";
+      AuthType2["RegistrationToken"] = "m.login.registration_token";
+      AuthType2["UnstableRegistrationToken"] = "org.matrix.msc3231.login.registration_token";
+      AuthType2["OAuth"] = "m.oauth";
+      return AuthType2;
+    })({});
+    NoAuthFlowFoundError = class extends Error {
+      constructor(m, required_stages, flows) {
+        super(m);
+        _defineProperty(this, "name", "NoAuthFlowFoundError");
+        this.required_stages = required_stages;
+        this.flows = flows;
+      }
+    };
+    InteractiveAuth = class {
+      constructor(opts) {
+        _defineProperty(this, "matrixClient", void 0);
+        _defineProperty(this, "inputs", void 0);
+        _defineProperty(this, "clientSecret", void 0);
+        _defineProperty(this, "requestCallback", void 0);
+        _defineProperty(this, "busyChangedCallback", void 0);
+        _defineProperty(this, "stateUpdatedCallback", void 0);
+        _defineProperty(this, "requestEmailTokenCallback", void 0);
+        _defineProperty(this, "supportedStages", void 0);
+        _defineProperty(this, "data", void 0);
+        _defineProperty(this, "emailSid", void 0);
+        _defineProperty(this, "requestingEmailToken", false);
+        _defineProperty(this, "attemptAuthDeferred", null);
+        _defineProperty(this, "chosenFlow", null);
+        _defineProperty(this, "currentStage", null);
+        _defineProperty(this, "emailAttempt", 1);
+        _defineProperty(this, "submitPromise", null);
+        _defineProperty(this, "requestEmailToken", async () => {
+          if (!this.requestingEmailToken) {
+            logger.trace("Requesting email token. Attempt: " + this.emailAttempt);
+            this.requestingEmailToken = true;
+            try {
+              const requestTokenResult = await this.requestEmailTokenCallback(this.inputs.emailAddress, this.clientSecret, this.emailAttempt++, this.data.session);
+              this.emailSid = requestTokenResult.sid;
+              logger.trace("Email token request succeeded");
+            } finally {
+              this.requestingEmailToken = false;
+            }
+          } else {
+            logger.warn("Could not request email token: Already requesting");
+          }
+        });
+        this.matrixClient = opts.matrixClient;
+        this.data = opts.authData || {
+          flows: []
+        };
+        this.requestCallback = opts.doRequest;
+        this.busyChangedCallback = opts.busyChanged;
+        this.stateUpdatedCallback = opts.stateUpdated || opts.startAuthStage;
+        this.requestEmailTokenCallback = opts.requestEmailToken;
+        this.inputs = opts.inputs || {};
+        if (opts.sessionId) this.data.session = opts.sessionId;
+        this.clientSecret = opts.clientSecret || this.matrixClient.generateClientSecret();
+        this.emailSid = opts.emailSid;
+        if (opts.supportedStages !== void 0) this.supportedStages = new Set(opts.supportedStages);
+      }
+      /**
+       * begin the authentication process.
+       *
+       * @returns which resolves to the response on success,
+       * or rejects with the error on failure. Rejects with NoAuthFlowFoundError if
+       *     no suitable authentication flow can be found
+       */
+      async attemptAuth() {
+        this.attemptAuthDeferred = Promise.withResolvers();
+        const promise = this.attemptAuthDeferred.promise;
+        if (!this.data?.flows?.length) {
+          this.busyChangedCallback?.(true);
+          const auth = this.data.session ? {
+            session: this.data.session
+          } : null;
+          this.doRequest(auth).finally(() => {
+            this.busyChangedCallback?.(false);
+          });
+        } else {
+          this.startNextAuthStage();
+        }
+        return promise;
+      }
+      /**
+       * Poll to check if the auth session or current stage has been
+       * completed out-of-band. If so, the attemptAuth promise will
+       * be resolved.
+       */
+      async poll() {
+        if (!this.data.session) return;
+        if (!this.attemptAuthDeferred) return;
+        if (this.submitPromise) return;
+        let authDict = {};
+        if (this.currentStage == EMAIL_STAGE_TYPE) {
+          if (this.emailSid) {
+            const creds = {
+              sid: this.emailSid,
+              client_secret: this.clientSecret
+            };
+            const isUrl = this.matrixClient.getIdentityServerUrl();
+            if (isUrl) {
+              creds.id_server = new URL(isUrl).host;
+            }
+            authDict = {
+              type: EMAIL_STAGE_TYPE,
+              threepid_creds: creds
             };
           }
-          function step(op) {
-            if (f) throw new TypeError("Generator is already executing.");
-            while (_) try {
-              if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
-              if (y = 0, t) op = [op[0] & 2, t.value];
-              switch (op[0]) {
-                case 0:
-                case 1:
-                  t = op;
-                  break;
-                case 4:
-                  _.label++;
-                  return { value: op[1], done: false };
-                case 5:
-                  _.label++;
-                  y = op[1];
-                  op = [0];
-                  continue;
-                case 7:
-                  op = _.ops.pop();
-                  _.trys.pop();
-                  continue;
-                default:
-                  if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) {
-                    _ = 0;
-                    continue;
-                  }
-                  if (op[0] === 3 && (!t || op[1] > t[0] && op[1] < t[3])) {
-                    _.label = op[1];
-                    break;
-                  }
-                  if (op[0] === 6 && _.label < t[1]) {
-                    _.label = t[1];
-                    t = op;
-                    break;
-                  }
-                  if (t && _.label < t[2]) {
-                    _.label = t[2];
-                    _.ops.push(op);
-                    break;
-                  }
-                  if (t[2]) _.ops.pop();
-                  _.trys.pop();
-                  continue;
-              }
-              op = body.call(thisArg, _);
-            } catch (e) {
-              op = [6, e];
-              y = 0;
-            } finally {
-              f = t = 0;
+        }
+        this.submitAuthDict(authDict, true);
+      }
+      /**
+       * get the auth session ID
+       *
+       * @returns session id
+       */
+      getSessionId() {
+        return this.data?.session;
+      }
+      /**
+       * get the client secret used for validation sessions
+       * with the identity server.
+       *
+       * @returns client secret
+       */
+      getClientSecret() {
+        return this.clientSecret;
+      }
+      /**
+       * get the server params for a given stage
+       *
+       * @param loginType - login type for the stage
+       * @returns any parameters from the server for this stage
+       */
+      getStageParams(loginType) {
+        return this.data?.params?.[loginType];
+      }
+      getChosenFlow() {
+        return this.chosenFlow;
+      }
+      /**
+       * submit a new auth dict and fire off the request. This will either
+       * make attemptAuth resolve/reject, or cause the startAuthStage callback
+       * to be called for a new stage.
+       *
+       * @param authData - new auth dict to send to the server. Should
+       *    include a `type` property denoting the login type, as well as any
+       *    other params for that stage.
+       * @param background - If true, this request failing will not result
+       *    in the attemptAuth promise being rejected. This can be set to true
+       *    for requests that just poll to see if auth has been completed elsewhere.
+       */
+      async submitAuthDict(authData, background = false) {
+        if (!this.attemptAuthDeferred) {
+          throw new Error("submitAuthDict() called before attemptAuth()");
+        }
+        if (!background) {
+          this.busyChangedCallback?.(true);
+        }
+        while (this.submitPromise) {
+          try {
+            await this.submitPromise;
+          } catch {
+          }
+        }
+        let auth;
+        if (this.data?.session) {
+          auth = Object.assign({
+            session: this.data.session
+          }, authData);
+        } else {
+          auth = authData;
+        }
+        try {
+          this.submitPromise = this.doRequest(auth, background);
+          await this.submitPromise;
+        } finally {
+          this.submitPromise = null;
+          if (!background) {
+            this.busyChangedCallback?.(false);
+          }
+        }
+      }
+      /**
+       * Gets the sid for the email validation session
+       * Specific to m.login.email.identity
+       *
+       * @returns The sid of the email auth session
+       */
+      getEmailSid() {
+        return this.emailSid;
+      }
+      /**
+       * Sets the sid for the email validation session
+       * This must be set in order to successfully poll for completion
+       * of the email validation.
+       * Specific to m.login.email.identity
+       *
+       * @param sid - The sid for the email validation session
+       */
+      setEmailSid(sid) {
+        this.emailSid = sid;
+      }
+      /**
+       * Fire off a request, and either resolve the promise, or call
+       * startAuthStage.
+       *
+       * @internal
+       * @param auth - new auth dict, including session id
+       * @param background - If true, this request is a background poll, so it
+       *    failing will not result in the attemptAuth promise being rejected.
+       *    This can be set to true for requests that just poll to see if auth has
+       *    been completed elsewhere.
+       */
+      async doRequest(auth, background = false) {
+        try {
+          const result = await this.requestCallback(auth, background);
+          this.attemptAuthDeferred.resolve(result);
+          this.attemptAuthDeferred = null;
+        } catch (error) {
+          const matrixError = error instanceof MatrixError ? error : null;
+          const errorFlows = matrixError?.data?.flows ?? null;
+          const haveFlows = this.data?.flows || Boolean(errorFlows);
+          if (!matrixError || matrixError.httpStatus !== 401 || !matrixError.data || !haveFlows) {
+            if (!background) {
+              this.attemptAuthDeferred?.reject(error);
+            } else {
+              logger.log("Background poll request failed doing UI auth: ignoring", error);
             }
-            if (op[0] & 5) throw op[1];
-            return { value: op[0] ? op[1] : void 0, done: true };
           }
+          if (matrixError && !matrixError.data) {
+            matrixError.data = {};
+          }
+          if (matrixError && !matrixError.data.flows && !matrixError.data.completed && !matrixError.data.session) {
+            matrixError.data.flows = this.data.flows;
+            matrixError.data.completed = this.data.completed;
+            matrixError.data.session = this.data.session;
+          }
+          if (matrixError) {
+            this.data = matrixError.data;
+          }
+          try {
+            this.startNextAuthStage();
+          } catch (e) {
+            this.attemptAuthDeferred.reject(e);
+            this.attemptAuthDeferred = null;
+            return;
+          }
+          if (!this.emailSid && this.chosenFlow?.stages.includes(AuthType.Email)) {
+            try {
+              await this.requestEmailToken();
+            } catch (e) {
+              this.attemptAuthDeferred.reject(e);
+              this.attemptAuthDeferred = null;
+            }
+          }
+        }
+      }
+      /**
+       * Pick the next stage and call the callback
+       *
+       * @internal
+       * @throws {@link NoAuthFlowFoundError} If no suitable authentication flow can be found
+       */
+      startNextAuthStage() {
+        const nextStage = this.chooseStage();
+        if (!nextStage) {
+          throw new Error("No incomplete flows from the server");
+        }
+        this.currentStage = nextStage;
+        if (nextStage === AuthType.Dummy) {
+          this.submitAuthDict({
+            type: "m.login.dummy"
+          });
+          return;
+        }
+        if (this.data?.errcode || this.data?.error) {
+          this.stateUpdatedCallback(nextStage, {
+            errcode: this.data?.errcode || "",
+            error: this.data?.error || ""
+          });
+          return;
+        }
+        this.stateUpdatedCallback(nextStage, nextStage === EMAIL_STAGE_TYPE ? {
+          emailSid: this.emailSid
+        } : {});
+      }
+      /**
+       * Pick the next auth stage
+       *
+       * @internal
+       * @returns login type
+       * @throws {@link NoAuthFlowFoundError} If no suitable authentication flow can be found
+       */
+      chooseStage() {
+        if (this.chosenFlow === null) {
+          this.chosenFlow = this.chooseFlow();
+        }
+        logger.log("Active flow => %s", JSON.stringify(this.chosenFlow));
+        const nextStage = this.firstUncompletedStage(this.chosenFlow);
+        logger.log("Next stage: %s", nextStage);
+        return nextStage;
+      }
+      // Returns a low number for flows we consider best. Counts increase for longer flows and even more so
+      // for flows which contain stages not listed in `supportedStages`.
+      scoreFlow(flow) {
+        let score = flow.stages.length;
+        if (this.supportedStages !== void 0) {
+          score += flow.stages.filter((stage) => !this.supportedStages.has(stage)).length * 10;
+        }
+        return score;
+      }
+      /**
+       * Pick one of the flows from the returned list
+       * If a flow using all of the inputs is found, it will
+       * be returned, otherwise, null will be returned.
+       *
+       * Only flows using all given inputs are chosen because it
+       * is likely to be surprising if the user provides a
+       * credential and it is not used. For example, for registration,
+       * this could result in the email not being used which would leave
+       * the account with no means to reset a password.
+       *
+       * @internal
+       * @returns flow
+       * @throws {@link NoAuthFlowFoundError} If no suitable authentication flow can be found
+       */
+      chooseFlow() {
+        const flows = this.data?.flows || [];
+        const haveEmail = Boolean(this.inputs.emailAddress) || Boolean(this.emailSid);
+        const haveMsisdn = Boolean(this.inputs.phoneCountry) && Boolean(this.inputs.phoneNumber);
+        flows.sort((a, b) => this.scoreFlow(a) - this.scoreFlow(b));
+        for (const flow of flows) {
+          let flowHasEmail = false;
+          let flowHasMsisdn = false;
+          for (const stage of flow.stages) {
+            if (stage === EMAIL_STAGE_TYPE) {
+              flowHasEmail = true;
+            } else if (stage == MSISDN_STAGE_TYPE) {
+              flowHasMsisdn = true;
+            }
+          }
+          if (flowHasEmail == haveEmail && flowHasMsisdn == haveMsisdn) {
+            return flow;
+          }
+        }
+        const requiredStages = [];
+        if (haveEmail) requiredStages.push(EMAIL_STAGE_TYPE);
+        if (haveMsisdn) requiredStages.push(MSISDN_STAGE_TYPE);
+        throw new NoAuthFlowFoundError("No appropriate authentication flow found", requiredStages, flows);
+      }
+      /**
+       * Get the first uncompleted stage in the given flow
+       *
+       * @internal
+       * @returns login type
+       */
+      firstUncompletedStage(flow) {
+        const completed = this.data?.completed || [];
+        return flow.stages.find((stageType) => !completed.includes(stageType));
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/store/indexeddb-local-backend.js
+function selectQuery(store, keyRange, resultMapper) {
+  const query = store.openCursor(keyRange);
+  return new Promise((resolve, reject) => {
+    const results = [];
+    query.onerror = () => {
+      reject(new Error(`selectQuery failed for ${store.name}`, {
+        cause: query.error
+      }));
+    };
+    query.onsuccess = () => {
+      const cursor = query.result;
+      if (!cursor) {
+        resolve(results);
+        return;
+      }
+      results.push(resultMapper(cursor));
+      cursor.continue();
+    };
+  });
+}
+function txnAsPromise(txn) {
+  return new Promise((resolve, reject) => {
+    txn.oncomplete = function(event) {
+      resolve(event);
+    };
+    txn.onerror = function() {
+      reject(txn.error);
+    };
+  });
+}
+function reqAsEventPromise(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = function(event) {
+      resolve(event);
+    };
+    req.onerror = function() {
+      reject(req.error);
+    };
+  });
+}
+function reqAsPromise(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req);
+    req.onerror = (err) => reject(err);
+  });
+}
+function reqAsCursorPromise(req) {
+  return reqAsEventPromise(req).then((event) => req.result);
+}
+var DB_MIGRATIONS2, VERSION2, LocalIndexedDBStoreBackend;
+var init_indexeddb_local_backend = __esm({
+  "node_modules/matrix-js-sdk/lib/store/indexeddb-local-backend.js"() {
+    init_defineProperty();
+    init_sync_accumulator();
+    init_utils();
+    init_indexeddb_helpers();
+    init_logger();
+    DB_MIGRATIONS2 = [
+      (db) => {
+        db.createObjectStore("users", {
+          keyPath: ["userId"]
+        });
+        db.createObjectStore("accountData", {
+          keyPath: ["type"]
+        });
+        db.createObjectStore("sync", {
+          keyPath: ["clobber"]
+        });
+      },
+      (db) => {
+        const oobMembersStore = db.createObjectStore("oob_membership_events", {
+          keyPath: ["room_id", "state_key"]
+        });
+        oobMembersStore.createIndex("room", "room_id");
+      },
+      (db) => {
+        db.createObjectStore("client_options", {
+          keyPath: ["clobber"]
+        });
+      },
+      (db) => {
+        db.createObjectStore("to_device_queue", {
+          autoIncrement: true
+        });
+      },
+      (db) => {
+        db.createObjectStore("user_profile", {
+          keyPath: ["userId"]
+        });
+      }
+      // Expand as needed.
+    ];
+    VERSION2 = DB_MIGRATIONS2.length;
+    LocalIndexedDBStoreBackend = class {
+      static exists(indexedDB2, dbName) {
+        dbName = "matrix-js-sdk:" + (dbName || "default");
+        return exists(indexedDB2, dbName);
+      }
+      /**
+       * Does the actual reading from and writing to the indexeddb
+       *
+       * Construct a new Indexed Database store backend. This requires a call to
+       * `connect()` before this store can be used.
+       * @param indexedDB - The Indexed DB interface e.g
+       * `window.indexedDB`
+       * @param dbName - Optional database name. The same name must be used
+       * to open the same database.
+       */
+      constructor(indexedDB2, dbName = "default") {
+        _defineProperty(this, "dbName", void 0);
+        _defineProperty(this, "syncAccumulator", void 0);
+        _defineProperty(this, "db", void 0);
+        _defineProperty(this, "disconnected", true);
+        _defineProperty(this, "_isNewlyCreated", false);
+        _defineProperty(this, "syncToDatabasePromise", void 0);
+        _defineProperty(this, "pendingUserPresenceData", []);
+        this.indexedDB = indexedDB2;
+        this.dbName = "matrix-js-sdk:" + dbName;
+        this.syncAccumulator = new SyncAccumulator();
+      }
+      /**
+       * Attempt to connect to the database. This can fail if the user does not
+       * grant permission.
+       * @returns Promise which resolves if successfully connected.
+       */
+      connect(onClose) {
+        if (!this.disconnected) {
+          logger.log(`LocalIndexedDBStoreBackend.connect: already connected or connecting`);
+          return Promise.resolve();
+        }
+        this.disconnected = false;
+        logger.log(`LocalIndexedDBStoreBackend.connect: connecting...`);
+        const req = this.indexedDB.open(this.dbName, VERSION2);
+        req.onupgradeneeded = (ev) => {
+          const db = req.result;
+          const oldVersion = ev.oldVersion;
+          logger.log(`LocalIndexedDBStoreBackend.connect: upgrading from ${oldVersion}`);
+          if (oldVersion < 1) {
+            this._isNewlyCreated = true;
+          }
+          DB_MIGRATIONS2.forEach((migration, index) => {
+            if (oldVersion <= index) migration(db);
+          });
         };
-        Object.defineProperty(exports3, "__esModule", { value: true });
-        exports3.decodeBase64 = exports3.encodeBase64 = exports3.decryptAttachment = exports3.encryptAttachment = void 0;
-        function encryptAttachment2(plaintextBuffer) {
-          return __awaiter(this, void 0, void 0, function() {
-            var ivArray, cryptoKey, exportedKey, ciphertextBuffer, sha256Buffer;
-            return __generator(this, function(_a) {
-              switch (_a.label) {
-                case 0:
-                  ivArray = new Uint8Array(16);
-                  window.crypto.getRandomValues(ivArray.subarray(0, 8));
-                  return [4, window.crypto.subtle.generateKey({ "name": "AES-CTR", "length": 256 }, true, ["encrypt", "decrypt"])];
-                case 1:
-                  cryptoKey = _a.sent();
-                  return [4, window.crypto.subtle.exportKey("jwk", cryptoKey)];
-                case 2:
-                  exportedKey = _a.sent();
-                  return [4, window.crypto.subtle.encrypt({ name: "AES-CTR", counter: ivArray, length: 64 }, cryptoKey, plaintextBuffer)];
-                case 3:
-                  ciphertextBuffer = _a.sent();
-                  return [4, window.crypto.subtle.digest("SHA-256", ciphertextBuffer)];
-                case 4:
-                  sha256Buffer = _a.sent();
-                  return [2, {
-                    data: ciphertextBuffer,
-                    info: {
-                      v: "v2",
-                      key: exportedKey,
-                      iv: encodeBase642(ivArray),
-                      hashes: {
-                        sha256: encodeBase642(new Uint8Array(sha256Buffer))
-                      }
-                    }
-                  }];
+        req.onblocked = () => {
+          logger.log(`can't yet open LocalIndexedDBStoreBackend because it is open elsewhere`);
+        };
+        logger.log(`LocalIndexedDBStoreBackend.connect: awaiting connection...`);
+        return reqAsEventPromise(req).then(async () => {
+          logger.log(`LocalIndexedDBStoreBackend.connect: connected`);
+          this.db = req.result;
+          this.db.onversionchange = () => {
+            this.db?.close();
+            this.disconnected = true;
+            this.db = void 0;
+          };
+          this.db.onclose = () => {
+            this.disconnected = true;
+            this.db = void 0;
+            onClose?.();
+          };
+          await this.init();
+        });
+      }
+      /** @returns whether or not the database was newly created in this session. */
+      isNewlyCreated() {
+        return Promise.resolve(this._isNewlyCreated);
+      }
+      /**
+       * Having connected, load initial data from the database and prepare for use
+       * @returns Promise which resolves on success
+       */
+      init() {
+        return Promise.all([this.loadAccountData(), this.loadSyncData()]).then(([accountData, syncData]) => {
+          logger.log(`LocalIndexedDBStoreBackend: loaded initial data`);
+          this.syncAccumulator.accumulate({
+            next_batch: syncData.nextBatch,
+            rooms: syncData.roomsData,
+            account_data: {
+              events: accountData
+            }
+          }, true);
+        });
+      }
+      /**
+       * Returns the out-of-band membership events for this room that
+       * were previously loaded.
+       * @returns the events, potentially an empty array if OOB loading didn't yield any new members
+       * @returns in case the members for this room haven't been stored yet
+       */
+      getOutOfBandMembers(roomId) {
+        return new Promise((resolve, reject) => {
+          const tx = this.db.transaction(["oob_membership_events"], "readonly");
+          const store = tx.objectStore("oob_membership_events");
+          const roomIndex = store.index("room");
+          const range = IDBKeyRange.only(roomId);
+          const request = roomIndex.openCursor(range);
+          const membershipEvents = [];
+          let oobWritten = false;
+          request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor) {
+              if (!membershipEvents.length && !oobWritten) {
+                return resolve(null);
               }
+              return resolve(membershipEvents);
+            }
+            const record = cursor.value;
+            if (record.oob_written) {
+              oobWritten = true;
+            } else {
+              membershipEvents.push(record);
+            }
+            cursor.continue();
+          };
+          request.onerror = (err) => {
+            reject(err);
+          };
+        }).then((events) => {
+          logger.log(`LL: got ${events?.length} membershipEvents from storage for room ${roomId} ...`);
+          return events;
+        });
+      }
+      /**
+       * Stores the out-of-band membership events for this room. Note that
+       * it still makes sense to store an empty array as the OOB status for the room is
+       * marked as fetched, and getOutOfBandMembers will return an empty array instead of null
+       * @param membershipEvents - the membership events to store
+       */
+      async setOutOfBandMembers(roomId, membershipEvents) {
+        logger.log(`LL: backend about to store ${membershipEvents.length} members for ${roomId}`);
+        const tx = this.db.transaction(["oob_membership_events"], "readwrite");
+        const store = tx.objectStore("oob_membership_events");
+        membershipEvents.forEach((e) => {
+          store.put(e);
+        });
+        const markerObject = {
+          room_id: roomId,
+          oob_written: true,
+          state_key: 0
+        };
+        store.put(markerObject);
+        await txnAsPromise(tx);
+        logger.log(`LL: backend done storing for ${roomId}!`);
+      }
+      async clearOutOfBandMembers(roomId) {
+        const readTx = this.db.transaction(["oob_membership_events"], "readonly");
+        const store = readTx.objectStore("oob_membership_events");
+        const roomIndex = store.index("room");
+        const roomRange = IDBKeyRange.only(roomId);
+        const minStateKeyProm = reqAsCursorPromise(roomIndex.openKeyCursor(roomRange, "next")).then((cursor) => cursor?.primaryKey?.[1]);
+        const maxStateKeyProm = reqAsCursorPromise(roomIndex.openKeyCursor(roomRange, "prev")).then((cursor) => cursor?.primaryKey?.[1]);
+        const [minStateKey, maxStateKey] = await Promise.all([minStateKeyProm, maxStateKeyProm]);
+        const writeTx = this.db.transaction(["oob_membership_events"], "readwrite");
+        const writeStore = writeTx.objectStore("oob_membership_events");
+        const membersKeyRange = IDBKeyRange.bound([roomId, minStateKey], [roomId, maxStateKey]);
+        logger.log(`LL: Deleting all users + marker in storage for room ${roomId}, with key range:`, [roomId, minStateKey], [roomId, maxStateKey]);
+        await reqAsPromise(writeStore.delete(membersKeyRange));
+      }
+      /**
+       * Clear the entire database. This should be used when logging out of a client
+       * to prevent mixing data between accounts. Closes the database.
+       * @returns Resolved when the database is cleared.
+       */
+      clearDatabase() {
+        return new Promise((resolve) => {
+          logger.log(`Removing indexeddb instance: ${this.dbName}`);
+          this.db?.close();
+          const req = this.indexedDB.deleteDatabase(this.dbName);
+          req.onblocked = () => {
+            logger.log(`can't yet delete indexeddb ${this.dbName} because it is open elsewhere`);
+          };
+          req.onerror = () => {
+            logger.warn(`unable to delete js-sdk store indexeddb: ${req.error?.name}`);
+            resolve();
+          };
+          req.onsuccess = () => {
+            logger.log(`Removed indexeddb instance: ${this.dbName}`);
+            resolve();
+          };
+        });
+      }
+      /**
+       * @param copy - If false, the data returned is from internal
+       * buffers and must not be mutated. Otherwise, a copy is made before
+       * returning such that the data can be safely mutated. Default: true.
+       *
+       * @returns Promise which resolves with a sync response to restore the
+       * client state to where it was at the last save, or null if there
+       * is no saved sync data.
+       */
+      getSavedSync(copy = true) {
+        const data = this.syncAccumulator.getJSON();
+        if (!data.nextBatch) return Promise.resolve(null);
+        if (copy) {
+          return Promise.resolve(deepCopy(data));
+        } else {
+          return Promise.resolve(data);
+        }
+      }
+      getNextBatchToken() {
+        return Promise.resolve(this.syncAccumulator.getNextBatchToken());
+      }
+      setSyncData(syncData) {
+        return Promise.resolve().then(() => {
+          this.syncAccumulator.accumulate(syncData);
+        });
+      }
+      /**
+       * Sync users and all accumulated sync data to the database.
+       * If a previous sync is in flight, the new data will be added to the
+       * next sync and the current sync's promise will be returned.
+       * @param userTuples - The user tuples
+       * @returns Promise which resolves if the data was persisted.
+       */
+      async syncToDatabase(userTuples) {
+        if (this.syncToDatabasePromise) {
+          logger.warn("Skipping syncToDatabase() as persist already in flight");
+          this.pendingUserPresenceData.push(...userTuples);
+          return this.syncToDatabasePromise;
+        }
+        userTuples.unshift(...this.pendingUserPresenceData);
+        this.syncToDatabasePromise = this.doSyncToDatabase(userTuples);
+        return this.syncToDatabasePromise;
+      }
+      async doSyncToDatabase(userTuples) {
+        try {
+          const syncData = this.syncAccumulator.getJSON(true);
+          await Promise.all([this.persistUserPresenceEvents(userTuples), this.persistAccountData(syncData.accountData), this.persistSyncData(syncData.nextBatch, syncData.roomsData)]);
+        } finally {
+          this.syncToDatabasePromise = void 0;
+        }
+      }
+      /**
+       * Persist rooms /sync data along with the next batch token.
+       * @param nextBatch - The next_batch /sync value.
+       * @param roomsData - The 'rooms' /sync data from a SyncAccumulator
+       * @returns Promise which resolves if the data was persisted.
+       */
+      persistSyncData(nextBatch, roomsData) {
+        logger.log("Persisting sync data up to", nextBatch);
+        return promiseTry(() => {
+          const txn = this.db.transaction(["sync"], "readwrite");
+          const store = txn.objectStore("sync");
+          store.put({
+            clobber: "-",
+            // constant key so will always clobber
+            nextBatch,
+            roomsData
+          });
+          return txnAsPromise(txn).then(() => {
+            logger.log("Persisted sync data up to", nextBatch);
+          });
+        });
+      }
+      /**
+       * Persist a list of account data events. Events with the same 'type' will
+       * be replaced.
+       * @param accountData - An array of raw user-scoped account data events
+       * @returns Promise which resolves if the events were persisted.
+       */
+      persistAccountData(accountData) {
+        return promiseTry(() => {
+          const txn = this.db.transaction(["accountData"], "readwrite");
+          const store = txn.objectStore("accountData");
+          for (const event of accountData) {
+            store.put(event);
+          }
+          return txnAsPromise(txn).then();
+        });
+      }
+      /**
+       * Persist a list of [user id, presence event] they are for.
+       * Users with the same 'userId' will be replaced.
+       * Presence events should be the event in its raw form (not the Event
+       * object)
+       * @param tuples - An array of [userid, event] tuples
+       * @returns Promise which resolves if the users were persisted.
+       */
+      persistUserPresenceEvents(tuples) {
+        return promiseTry(() => {
+          const txn = this.db.transaction(["users"], "readwrite");
+          const store = txn.objectStore("users");
+          for (const tuple of tuples) {
+            store.put({
+              userId: tuple[0],
+              event: tuple[1]
             });
+          }
+          return txnAsPromise(txn).then();
+        });
+      }
+      /**
+       * Load all user presence events from the database. This is not cached.
+       * FIXME: It would probably be more sensible to store the events in the
+       * sync.
+       * @returns A list of presence events in their raw form.
+       */
+      getUserPresenceEvents() {
+        return promiseTry(() => {
+          const txn = this.db.transaction(["users"], "readonly");
+          const store = txn.objectStore("users");
+          return selectQuery(store, void 0, (cursor) => {
+            return [cursor.value.userId, cursor.value.event];
+          });
+        });
+      }
+      /**
+       * Load all the account data events from the database. This is not cached.
+       * @returns A list of raw global account events.
+       */
+      loadAccountData() {
+        logger.log(`LocalIndexedDBStoreBackend: loading account data...`);
+        return promiseTry(() => {
+          const txn = this.db.transaction(["accountData"], "readonly");
+          const store = txn.objectStore("accountData");
+          return selectQuery(store, void 0, (cursor) => {
+            return cursor.value;
+          }).then((result) => {
+            logger.log(`LocalIndexedDBStoreBackend: loaded account data`);
+            return result;
+          });
+        });
+      }
+      /**
+       * Load the sync data from the database.
+       * @returns An object with "roomsData" and "nextBatch" keys.
+       */
+      loadSyncData() {
+        logger.log(`LocalIndexedDBStoreBackend: loading sync data...`);
+        return promiseTry(() => {
+          const txn = this.db.transaction(["sync"], "readonly");
+          const store = txn.objectStore("sync");
+          return selectQuery(store, void 0, (cursor) => {
+            return cursor.value;
+          }).then((results) => {
+            logger.log(`LocalIndexedDBStoreBackend: loaded sync data`);
+            if (results.length > 1) {
+              logger.warn("loadSyncData: More than 1 sync row found.");
+            }
+            return results.length > 0 ? results[0] : {};
+          });
+        });
+      }
+      getClientOptions() {
+        return Promise.resolve().then(() => {
+          const txn = this.db.transaction(["client_options"], "readonly");
+          const store = txn.objectStore("client_options");
+          return selectQuery(store, void 0, (cursor) => {
+            return cursor.value?.options;
+          }).then((results) => results[0]);
+        });
+      }
+      async storeClientOptions(options) {
+        const txn = this.db.transaction(["client_options"], "readwrite");
+        const store = txn.objectStore("client_options");
+        store.put({
+          clobber: "-",
+          // constant key so will always clobber
+          options
+        });
+        await txnAsPromise(txn);
+      }
+      async saveToDeviceBatches(batches) {
+        const txn = this.db.transaction(["to_device_queue"], "readwrite");
+        const store = txn.objectStore("to_device_queue");
+        for (const batch of batches) {
+          store.add(batch);
+        }
+        await txnAsPromise(txn);
+      }
+      async getOldestToDeviceBatch() {
+        const txn = this.db.transaction(["to_device_queue"], "readonly");
+        const store = txn.objectStore("to_device_queue");
+        const cursor = await reqAsCursorPromise(store.openCursor());
+        if (!cursor) return null;
+        const resultBatch = cursor.value;
+        return {
+          id: cursor.key,
+          txnId: resultBatch.txnId,
+          eventType: resultBatch.eventType,
+          batch: resultBatch.batch
+        };
+      }
+      async removeToDeviceBatch(id) {
+        const txn = this.db.transaction(["to_device_queue"], "readwrite");
+        const store = txn.objectStore("to_device_queue");
+        store.delete(id);
+        await txnAsPromise(txn);
+      }
+      async getUserProfile(userId) {
+        return Promise.resolve().then(() => {
+          const txn = this.db.transaction(["user_profile"], "readonly");
+          const store = txn.objectStore("user_profile");
+          return selectQuery(store, [userId], (cursor) => {
+            return cursor.value?.profile;
+          }).then((results) => results[0]);
+        });
+      }
+      async storeUserProfiles(userProfiles) {
+        const txn = this.db.transaction(["user_profile"], "readwrite");
+        const store = txn.objectStore("user_profile");
+        for (const [userId, profile] of userProfiles.entries()) {
+          store.put({
+            profile,
+            userId
           });
         }
-        exports3.encryptAttachment = encryptAttachment2;
-        function decryptAttachment2(ciphertextBuffer, info) {
-          return __awaiter(this, void 0, void 0, function() {
-            var ivArray, expectedSha256base64, cryptoKey, digestResult, counterLength;
-            return __generator(this, function(_a) {
-              switch (_a.label) {
-                case 0:
-                  if (info === void 0 || info.key === void 0 || info.iv === void 0 || info.hashes === void 0 || info.hashes.sha256 === void 0) {
-                    throw new Error("Invalid info. Missing info.key, info.iv or info.hashes.sha256 key");
-                  }
-                  if (info.v && !info.v.match(/^v[1-2]$/)) {
-                    throw new Error("Unsupported protocol version: " + info.v);
-                  }
-                  ivArray = decodeBase642(info.iv);
-                  expectedSha256base64 = info.hashes.sha256;
-                  return [4, window.crypto.subtle.importKey("jwk", info.key, { "name": "AES-CTR" }, false, ["encrypt", "decrypt"])];
-                case 1:
-                  cryptoKey = _a.sent();
-                  return [4, window.crypto.subtle.digest("SHA-256", ciphertextBuffer)];
-                case 2:
-                  digestResult = _a.sent();
-                  if (encodeBase642(new Uint8Array(digestResult)) != expectedSha256base64) {
-                    throw new Error("Mismatched SHA-256 digest");
-                  }
-                  if (info.v == "v1" || info.v == "v2") {
-                    counterLength = 64;
-                  } else {
-                    counterLength = 128;
-                  }
-                  return [2, window.crypto.subtle.decrypt({ name: "AES-CTR", counter: ivArray, length: counterLength }, cryptoKey, ciphertextBuffer)];
-              }
-            });
+        await txnAsPromise(txn);
+      }
+      async removeUserProfiles(userIds) {
+        const txn = this.db.transaction(["user_profile"], "readwrite");
+        const store = txn.objectStore("user_profile");
+        for (const userId of userIds) {
+          store.delete([userId]);
+        }
+        await txnAsPromise(txn);
+      }
+      async removeEventsFromRoom(roomId, eventIds) {
+        try {
+          this.syncAccumulator.removeEventsFromRoom(roomId, eventIds);
+          const syncData = this.syncAccumulator.getJSON(true);
+          await this.persistSyncData(syncData.nextBatch, syncData.roomsData);
+        } finally {
+          this.syncToDatabasePromise = void 0;
+        }
+      }
+      /*
+       * Close the database
+       */
+      async destroy() {
+        this.db?.close();
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/store/indexeddb-remote-backend.js
+var RemoteIndexedDBStoreBackend;
+var init_indexeddb_remote_backend = __esm({
+  "node_modules/matrix-js-sdk/lib/store/indexeddb-remote-backend.js"() {
+    init_defineProperty();
+    init_logger();
+    RemoteIndexedDBStoreBackend = class {
+      // Callback for when the IndexedDB gets closed unexpectedly
+      /**
+       * An IndexedDB store backend where the actual backend sits in a web
+       * worker.
+       *
+       * Construct a new Indexed Database store backend. This requires a call to
+       * `connect()` before this store can be used.
+       * @param workerFactory - Factory which produces a Worker
+       * @param dbName - Optional database name. The same name must be used
+       * to open the same database.
+       */
+      constructor(workerFactory, dbName) {
+        _defineProperty(this, "worker", void 0);
+        _defineProperty(this, "nextSeq", 0);
+        _defineProperty(this, "inFlight", {});
+        _defineProperty(this, "startPromiseResolvers", void 0);
+        _defineProperty(this, "onWorkerError", (ev) => {
+          logger.error("IndexedDB worker failed to connect", ev);
+          this.startPromiseResolvers?.reject(ev.message ?? new Error("IndexedDB worker failed to connect"));
+        });
+        _defineProperty(this, "onWorkerMessage", (ev) => {
+          const msg = ev.data;
+          if (msg.command == "closed") {
+            this.onClose?.();
+          } else if (msg.command == "cmd_success" || msg.command == "cmd_fail") {
+            if (msg.seq === void 0) {
+              logger.error("Got reply from worker with no seq");
+              return;
+            }
+            const def = this.inFlight[msg.seq];
+            if (def === void 0) {
+              logger.error("Got reply for unknown seq " + msg.seq);
+              return;
+            }
+            delete this.inFlight[msg.seq];
+            if (msg.command == "cmd_success") {
+              def.resolve(msg.result);
+            } else {
+              const error = new Error(msg.error.message);
+              error.name = msg.error.name;
+              def.reject(error);
+            }
+          } else {
+            logger.warn("Unrecognised message from worker: ", msg);
+          }
+        });
+        this.workerFactory = workerFactory;
+        this.dbName = dbName;
+      }
+      /**
+       * Attempt to connect to the database. This can fail if the user does not
+       * grant permission.
+       * @returns Promise which resolves if successfully connected.
+       */
+      connect(onClose) {
+        this.onClose = onClose;
+        return this.ensureStarted().then(() => this.doCmd("connect"));
+      }
+      /**
+       * Clear the entire database. This should be used when logging out of a client
+       * to prevent mixing data between accounts.
+       * @returns Resolved when the database is cleared.
+       */
+      clearDatabase() {
+        return this.ensureStarted().then(() => this.doCmd("clearDatabase"));
+      }
+      /** @returns whether or not the database was newly created in this session. */
+      isNewlyCreated() {
+        return this.doCmd("isNewlyCreated");
+      }
+      /**
+       * @returns Promise which resolves with a sync response to restore the
+       * client state to where it was at the last save, or null if there
+       * is no saved sync data.
+       */
+      getSavedSync() {
+        return this.doCmd("getSavedSync");
+      }
+      getNextBatchToken() {
+        return this.doCmd("getNextBatchToken");
+      }
+      setSyncData(syncData) {
+        return this.doCmd("setSyncData", [syncData]);
+      }
+      syncToDatabase(userTuples) {
+        return this.doCmd("syncToDatabase", [userTuples]);
+      }
+      /**
+       * Returns the out-of-band membership events for this room that
+       * were previously loaded.
+       * @returns the events, potentially an empty array if OOB loading didn't yield any new members
+       * @returns in case the members for this room haven't been stored yet
+       */
+      getOutOfBandMembers(roomId) {
+        return this.doCmd("getOutOfBandMembers", [roomId]);
+      }
+      /**
+       * Stores the out-of-band membership events for this room. Note that
+       * it still makes sense to store an empty array as the OOB status for the room is
+       * marked as fetched, and getOutOfBandMembers will return an empty array instead of null
+       * @param membershipEvents - the membership events to store
+       * @returns when all members have been stored
+       */
+      setOutOfBandMembers(roomId, membershipEvents) {
+        return this.doCmd("setOutOfBandMembers", [roomId, membershipEvents]);
+      }
+      clearOutOfBandMembers(roomId) {
+        return this.doCmd("clearOutOfBandMembers", [roomId]);
+      }
+      getClientOptions() {
+        return this.doCmd("getClientOptions");
+      }
+      storeClientOptions(options) {
+        return this.doCmd("storeClientOptions", [options]);
+      }
+      /**
+       * Load all user presence events from the database. This is not cached.
+       * @returns A list of presence events in their raw form.
+       */
+      getUserPresenceEvents() {
+        return this.doCmd("getUserPresenceEvents");
+      }
+      async saveToDeviceBatches(batches) {
+        return this.doCmd("saveToDeviceBatches", [batches]);
+      }
+      async getOldestToDeviceBatch() {
+        return this.doCmd("getOldestToDeviceBatch");
+      }
+      async removeToDeviceBatch(id) {
+        return this.doCmd("removeToDeviceBatch", [id]);
+      }
+      async getUserProfile(userId) {
+        return this.doCmd("getUserProfile", [userId]);
+      }
+      async storeUserProfiles(userProfiles) {
+        await this.doCmd("storeUserProfiles", [userProfiles]);
+      }
+      async removeUserProfiles(userIds) {
+        await this.doCmd("removeUserProfiles", [userIds]);
+      }
+      async removeEventsFromRoom(roomId, eventIds) {
+        await this.doCmd("removeEventsFromRoom", [roomId, eventIds]);
+      }
+      ensureStarted() {
+        if (!this.startPromiseResolvers) {
+          this.startPromiseResolvers = Promise.withResolvers();
+          try {
+            this.worker = this.workerFactory();
+          } catch (e) {
+            logger.error("IndexedDB worker failed to start", e);
+            this.startPromiseResolvers.reject(new Error("IndexedDB worker failed to start"));
+            return this.startPromiseResolvers.promise;
+          }
+          this.worker.onmessage = this.onWorkerMessage;
+          this.worker.onerror = this.onWorkerError;
+          this.doCmd("setupWorker", [this.dbName]).then(() => {
+            logger.log("IndexedDB worker is ready");
+            this.startPromiseResolvers?.resolve();
           });
         }
-        exports3.decryptAttachment = decryptAttachment2;
-        function encodeBase642(uint8Array) {
-          var latin1String = String.fromCharCode.apply(null, uint8Array);
-          var paddedBase64 = window.btoa(latin1String);
-          var inputLength = uint8Array.length;
-          var outputLength = 4 * Math.floor((inputLength + 2) / 3) + (inputLength + 2) % 3 - 2;
-          return paddedBase64.slice(0, outputLength);
-        }
-        exports3.encodeBase64 = encodeBase642;
-        function decodeBase642(base64) {
-          var paddedBase64 = base64 + "===".slice(0, (4 - base64.length % 4) % 4);
-          var latin1String = window.atob(paddedBase64);
-          var uint8Array = new Uint8Array(latin1String.length);
-          for (var i = 0; i < latin1String.length; i++) {
-            uint8Array[i] = latin1String.charCodeAt(i);
+        return this.startPromiseResolvers.promise;
+      }
+      doCmd(command, args) {
+        return Promise.resolve().then(() => {
+          const seq = this.nextSeq++;
+          const def = Promise.withResolvers();
+          this.inFlight[seq] = def;
+          this.worker?.postMessage({
+            command,
+            seq,
+            args
+          });
+          return def.promise;
+        });
+      }
+      /*
+       * Destroy the web worker
+       */
+      async destroy() {
+        this.worker?.terminate();
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/store/indexeddb.js
+function pendingEventsKey(roomId) {
+  return `mx_pending_events_${roomId}`;
+}
+var WRITE_DELAY_MS, IndexedDBStore;
+var init_indexeddb = __esm({
+  "node_modules/matrix-js-sdk/lib/store/indexeddb.js"() {
+    init_defineProperty();
+    init_memory();
+    init_indexeddb_local_backend();
+    init_indexeddb_remote_backend();
+    init_event2();
+    init_logger();
+    init_typed_event_emitter();
+    WRITE_DELAY_MS = 1e3 * 60 * 5;
+    IndexedDBStore = class extends MemoryStore {
+      static exists(indexedDB2, dbName) {
+        return LocalIndexedDBStoreBackend.exists(indexedDB2, dbName);
+      }
+      /**
+       * Construct a new Indexed Database store, which extends MemoryStore.
+       *
+       * This store functions like a MemoryStore except it periodically persists
+       * the contents of the store to an IndexedDB backend.
+       *
+       * All data is still kept in-memory but can be loaded from disk by calling
+       * `startup()`. This can make startup times quicker as a complete
+       * sync from the server is not required. This does not reduce memory usage as all
+       * the data is eagerly fetched when `startup()` is called.
+       * ```
+       * let opts = { indexedDB: window.indexedDB, localStorage: window.localStorage };
+       * let store = new IndexedDBStore(opts);
+       * let client = sdk.createClient({
+       *     store: store,
+       * });
+       * await store.startup(); // load from indexed db, must be called after createClient
+       * client.startClient();
+       * client.on("sync", function(state, prevState, data) {
+       *     if (state === "PREPARED") {
+       *         console.log("Started up, now with go faster stripes!");
+       *     }
+       * });
+       * ```
+       *
+       * @param opts - Options object.
+       */
+      constructor(opts) {
+        super(opts);
+        _defineProperty(this, "_backend", void 0);
+        _defineProperty(this, "startedUp", false);
+        _defineProperty(this, "syncTs", 0);
+        _defineProperty(this, "userModifiedMap", {});
+        _defineProperty(this, "emitter", new TypedEventEmitter());
+        _defineProperty(this, "onClose", () => {
+          this.emitter.emit("closed");
+        });
+        _defineProperty(this, "getSavedSync", this.degradable(() => {
+          return this.backend.getSavedSync();
+        }, "getSavedSync"));
+        _defineProperty(this, "isNewlyCreated", this.degradable(() => {
+          return this.backend.isNewlyCreated();
+        }, "isNewlyCreated"));
+        _defineProperty(this, "getSavedSyncToken", this.degradable(() => {
+          return this.backend.getNextBatchToken();
+        }, "getSavedSyncToken"));
+        _defineProperty(this, "deleteAllData", this.degradable(() => {
+          super.deleteAllData();
+          return this.backend.clearDatabase().then(() => {
+            logger.log("Deleted indexeddb data.");
+          }, (err) => {
+            logger.error(`Failed to delete indexeddb data: ${err}`);
+            throw err;
+          });
+        }, null));
+        _defineProperty(this, "reallySave", this.degradable(() => {
+          this.syncTs = Date.now();
+          const userTuples = [];
+          for (const u of this.getUsers()) {
+            if (this.userModifiedMap[u.userId] === u.getLastModifiedTime()) continue;
+            if (!u.events.presence) continue;
+            userTuples.push([u.userId, u.events.presence.event]);
+            this.userModifiedMap[u.userId] = u.getLastModifiedTime();
           }
-          return uint8Array;
+          return this.backend.syncToDatabase(userTuples);
+        }, null));
+        _defineProperty(this, "setSyncData", this.degradable((syncData) => {
+          return this.backend.setSyncData(syncData);
+        }, "setSyncData"));
+        _defineProperty(this, "getOutOfBandMembers", this.degradable((roomId) => {
+          return this.backend.getOutOfBandMembers(roomId);
+        }, "getOutOfBandMembers"));
+        _defineProperty(this, "setOutOfBandMembers", this.degradable((roomId, membershipEvents) => {
+          super.setOutOfBandMembers(roomId, membershipEvents);
+          return this.backend.setOutOfBandMembers(roomId, membershipEvents);
+        }, "setOutOfBandMembers"));
+        _defineProperty(this, "clearOutOfBandMembers", this.degradable((roomId) => {
+          super.clearOutOfBandMembers(roomId);
+          return this.backend.clearOutOfBandMembers(roomId);
+        }, "clearOutOfBandMembers"));
+        _defineProperty(this, "getClientOptions", this.degradable(() => {
+          return this.backend.getClientOptions();
+        }, "getClientOptions"));
+        _defineProperty(this, "storeClientOptions", this.degradable((options) => {
+          super.storeClientOptions(options);
+          return this.backend.storeClientOptions(options);
+        }, "storeClientOptions"));
+        this.opts = opts;
+        if (!opts.indexedDB) {
+          throw new Error("Missing required option: indexedDB");
         }
-        exports3.decodeBase64 = decodeBase642;
-        exports3.default = {
-          encryptAttachment: encryptAttachment2,
-          decryptAttachment: decryptAttachment2,
-          encodeBase64: encodeBase642,
-          decodeBase64: decodeBase642
+        if (opts.workerFactory) {
+          this._backend = new RemoteIndexedDBStoreBackend(opts.workerFactory, opts.dbName);
+        } else {
+          this._backend = new LocalIndexedDBStoreBackend(opts.indexedDB, opts.dbName);
+        }
+      }
+      /**
+       * The backend instance.
+       * Call through to this API if you need to perform specific indexeddb actions like deleting the database.
+       */
+      get backend() {
+        return this._backend;
+      }
+      /** Re-exports `TypedEventEmitter.on` */
+      on(event, handler) {
+        this.emitter.on(event, handler);
+      }
+      /**
+       * @returns Resolved when loaded from indexed db.
+       */
+      startup() {
+        if (this.startedUp) {
+          logger.log(`IndexedDBStore.startup: already started`);
+          return Promise.resolve();
+        }
+        logger.log(`IndexedDBStore.startup: connecting to backend`);
+        return this.backend.connect(this.onClose).catch((e) => {
+          if (this.opts.workerFactory) {
+            logger.log("Falling back to local indexeddb backend");
+            this._backend = new LocalIndexedDBStoreBackend(this.opts.indexedDB, this.opts.dbName);
+            return this.backend.connect(this.onClose);
+          }
+          throw e;
+        }).then(() => {
+          logger.log(`IndexedDBStore.startup: loading presence events`);
+          return this.backend.getUserPresenceEvents();
+        }).then((userPresenceEvents) => {
+          logger.log(`IndexedDBStore.startup: processing presence events`);
+          userPresenceEvents.forEach(([userId, rawEvent]) => {
+            if (!this.createUser) {
+              throw new Error("`IndexedDBStore.startup` must be called after assigning it to the client, not before!");
+            }
+            const u = this.createUser(userId);
+            if (rawEvent) {
+              u.setPresenceEvent(new MatrixEvent(rawEvent));
+            }
+            this.userModifiedMap[u.userId] = u.getLastModifiedTime();
+            this.storeUser(u);
+          });
+          this.startedUp = true;
+        });
+      }
+      /*
+       * Close the database and destroy any associated workers
+       */
+      destroy() {
+        return this.backend.destroy();
+      }
+      /**
+       * Whether this store would like to save its data
+       * Note that obviously whether the store wants to save or
+       * not could change between calling this function and calling
+       * save().
+       *
+       * @returns True if calling save() will actually save
+       *     (at the time this function is called).
+       */
+      wantsSave() {
+        const now = Date.now();
+        return now - this.syncTs > WRITE_DELAY_MS;
+      }
+      /**
+       * Possibly write data to the database.
+       *
+       * @param force - True to force a save to happen
+       * @returns Promise resolves after the write completes
+       *     (or immediately if no write is performed)
+       */
+      save(force = false) {
+        if (force || this.wantsSave()) {
+          return this.reallySave();
+        }
+        return Promise.resolve();
+      }
+      /**
+       * All member functions of `IndexedDBStore` that access the backend use this wrapper to
+       * watch for failures after initial store startup, including `QuotaExceededError` as
+       * free disk space changes, etc.
+       *
+       * When IndexedDB fails via any of these paths, we degrade this back to a `MemoryStore`
+       * in place so that the current operation and all future ones are in-memory only.
+       *
+       * @param func - The degradable work to do.
+       * @param fallback - The method name for fallback.
+       * @returns A wrapped member function.
+       */
+      degradable(func, fallback) {
+        const fallbackFn = fallback ? super[fallback] : null;
+        return async (...args) => {
+          try {
+            return await func.call(this, ...args);
+          } catch (e) {
+            logger.error("IndexedDBStore failure, degrading to MemoryStore", e);
+            this.emitter.emit("degraded", e);
+            try {
+              logger.log("IndexedDBStore trying to delete degraded data");
+              await this.backend.clearDatabase();
+              logger.log("IndexedDBStore delete after degrading succeeded");
+            } catch (e2) {
+              logger.warn("IndexedDBStore delete after degrading failed", e2);
+            }
+            if (fallbackFn) {
+              return fallbackFn.call(this, ...args);
+            }
+          }
         };
-      }, {}] }, {}, [1])(1);
-    });
+      }
+      // XXX: ideally these would be stored in indexeddb as part of the room but,
+      // we don't store rooms as such and instead accumulate entire sync responses atm.
+      async getPendingEvents(roomId) {
+        if (!this.localStorage) return super.getPendingEvents(roomId);
+        const serialized = this.localStorage.getItem(pendingEventsKey(roomId));
+        if (serialized) {
+          try {
+            return JSON.parse(serialized);
+          } catch (e) {
+            logger.error("Could not parse persisted pending events", e);
+          }
+        }
+        return [];
+      }
+      async setPendingEvents(roomId, events) {
+        if (!this.localStorage) return super.setPendingEvents(roomId, events);
+        if (events.length > 0) {
+          this.localStorage.setItem(pendingEventsKey(roomId), JSON.stringify(events));
+        } else {
+          this.localStorage.removeItem(pendingEventsKey(roomId));
+        }
+      }
+      saveToDeviceBatches(batches) {
+        return this.backend.saveToDeviceBatches(batches);
+      }
+      getOldestToDeviceBatch() {
+        return this.backend.getOldestToDeviceBatch();
+      }
+      removeToDeviceBatch(id) {
+        return this.backend.removeToDeviceBatch(id);
+      }
+      async getUserProfile(userId) {
+        return this.backend.getUserProfile(userId);
+      }
+      async storeUserProfiles(userProfiles) {
+        return this.backend.storeUserProfiles(userProfiles);
+      }
+      async removeUserProfiles(userIds) {
+        return this.backend.removeUserProfiles(userIds);
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/@types/threepids.js
+var ThreepidMedium;
+var init_threepids = __esm({
+  "node_modules/matrix-js-sdk/lib/@types/threepids.js"() {
+    ThreepidMedium = /* @__PURE__ */ (function(ThreepidMedium2) {
+      ThreepidMedium2["Email"] = "email";
+      ThreepidMedium2["Phone"] = "msisdn";
+      return ThreepidMedium2;
+    })({});
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/@types/auth.js
+var OAUTH_AWARE_PREFERRED_FLOW_FIELD, IdentityProviderBrand, SSOAction;
+var init_auth = __esm({
+  "node_modules/matrix-js-sdk/lib/@types/auth.js"() {
+    init_NamespacedValue();
+    OAUTH_AWARE_PREFERRED_FLOW_FIELD = new UnstableValue("oauth_aware_preferred", "org.matrix.msc3824.delegated_oidc_compatibility");
+    IdentityProviderBrand = /* @__PURE__ */ (function(IdentityProviderBrand2) {
+      IdentityProviderBrand2["Gitlab"] = "gitlab";
+      IdentityProviderBrand2["Github"] = "github";
+      IdentityProviderBrand2["Apple"] = "apple";
+      IdentityProviderBrand2["Google"] = "google";
+      IdentityProviderBrand2["Facebook"] = "facebook";
+      IdentityProviderBrand2["Twitter"] = "twitter";
+      return IdentityProviderBrand2;
+    })({});
+    SSOAction = /* @__PURE__ */ (function(SSOAction2) {
+      SSOAction2["LOGIN"] = "login";
+      SSOAction2["REGISTER"] = "register";
+      return SSOAction2;
+    })({});
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/models/profile-keys.js
+var ProfileKeyTimezone, ProfileKeyMSC4175Timezone;
+var init_profile_keys = __esm({
+  "node_modules/matrix-js-sdk/lib/models/profile-keys.js"() {
+    ProfileKeyTimezone = "m.tz";
+    ProfileKeyMSC4175Timezone = "us.cloke.msc4175.tz";
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/models/related-relations.js
+var RelatedRelations;
+var init_related_relations = __esm({
+  "node_modules/matrix-js-sdk/lib/models/related-relations.js"() {
+    init_defineProperty();
+    RelatedRelations = class {
+      constructor(relations) {
+        _defineProperty(this, "relations", void 0);
+        this.relations = relations.filter((r) => !!r);
+      }
+      getRelations() {
+        return this.relations.reduce((c, p) => [...c, ...p.getRelations()], []);
+      }
+      on(ev, fn) {
+        this.relations.forEach((r) => r.on(ev, fn));
+      }
+      off(ev, fn) {
+        this.relations.forEach((r) => r.off(ev, fn));
+      }
+    };
+  }
+});
+
+// node_modules/matrix-js-sdk/lib/store/local-storage-events-emitter.js
+var LocalStorageErrors, LocalStorageErrorsEventsEmitter, localStorageErrorsEventsEmitter;
+var init_local_storage_events_emitter = __esm({
+  "node_modules/matrix-js-sdk/lib/store/local-storage-events-emitter.js"() {
+    init_typed_event_emitter();
+    LocalStorageErrors = /* @__PURE__ */ (function(LocalStorageErrors2) {
+      LocalStorageErrors2["Global"] = "Global";
+      LocalStorageErrors2["SetItemError"] = "setItem";
+      LocalStorageErrors2["GetItemError"] = "getItem";
+      LocalStorageErrors2["RemoveItemError"] = "removeItem";
+      LocalStorageErrors2["ClearError"] = "clear";
+      LocalStorageErrors2["QuotaExceededError"] = "QuotaExceededError";
+      return LocalStorageErrors2;
+    })({});
+    LocalStorageErrorsEventsEmitter = class extends TypedEventEmitter {
+    };
+    localStorageErrorsEventsEmitter = new LocalStorageErrorsEventsEmitter();
   }
 });
 
@@ -66538,3221 +69503,6 @@ __export(matrix_exports, {
   validateRegistrationResponse: () => validateRegistrationResponse,
   waitForDeviceAuthorization: () => waitForDeviceAuthorization
 });
-init_memory_crypto_store();
-
-// node_modules/matrix-js-sdk/lib/store/memory.js
-init_defineProperty();
-init_room_state();
-init_utils();
-init_membership();
-function isValidFilterId(filterId) {
-  const isValidStr = typeof filterId === "string" && !!filterId && filterId !== "undefined" && // exclude these as we've serialized undefined in localStorage before
-  filterId !== "null";
-  return isValidStr || typeof filterId === "number";
-}
-var MemoryStore = class {
-  /**
-   * Construct a new in-memory data store for the Matrix Client.
-   * @param opts - Config options
-   */
-  constructor(opts = {}) {
-    _defineProperty(this, "rooms", {});
-    _defineProperty(this, "users", {});
-    _defineProperty(this, "syncToken", null);
-    _defineProperty(this, "filters", new MapWithDefault(() => /* @__PURE__ */ new Map()));
-    _defineProperty(this, "accountData", /* @__PURE__ */ new Map());
-    _defineProperty(this, "localStorage", void 0);
-    _defineProperty(this, "oobMembers", /* @__PURE__ */ new Map());
-    _defineProperty(this, "pendingEvents", {});
-    _defineProperty(this, "clientOptions", void 0);
-    _defineProperty(this, "pendingToDeviceBatches", []);
-    _defineProperty(this, "nextToDeviceBatchId", 0);
-    _defineProperty(this, "createUser", void 0);
-    _defineProperty(this, "userProfiles", /* @__PURE__ */ new Map());
-    _defineProperty(this, "onRoomMember", (event, state, member) => {
-      if (member.membership === KnownMembership.Invite) {
-        return;
-      }
-      const user = this.users[member.userId] || this.createUser?.(member.userId);
-      if (member.name) {
-        user.setDisplayName(member.name);
-        if (member.events.member) {
-          user.setRawDisplayName(member.events.member.getDirectionalContent().displayname);
-        }
-      }
-      if (member.events.member && member.events.member.getContent().avatar_url) {
-        user.setAvatarUrl(member.events.member.getContent().avatar_url);
-      }
-      this.users[user.userId] = user;
-    });
-    this.localStorage = opts.localStorage;
-  }
-  /**
-   * Retrieve the token to stream from.
-   * @returns The token or null.
-   */
-  getSyncToken() {
-    return this.syncToken;
-  }
-  /** @returns whether or not the database was newly created in this session. */
-  isNewlyCreated() {
-    return Promise.resolve(true);
-  }
-  /**
-   * Set the token to stream from.
-   * @param token - The token to stream from.
-   */
-  setSyncToken(token) {
-    this.syncToken = token;
-  }
-  /**
-   * Store the given room.
-   * @param room - The room to be stored. All properties must be stored.
-   */
-  storeRoom(room) {
-    this.rooms[room.roomId] = room;
-    room.currentState.on(RoomStateEvent.Members, this.onRoomMember);
-    room.currentState.getMembers().forEach((m) => {
-      this.onRoomMember(null, room.currentState, m);
-    });
-  }
-  setUserCreator(creator) {
-    this.createUser = creator;
-  }
-  /**
-   * Retrieve a room by its' room ID.
-   * @param roomId - The room ID.
-   * @returns The room or null.
-   */
-  getRoom(roomId) {
-    return this.rooms[roomId] || null;
-  }
-  /**
-   * Retrieve all known rooms.
-   * @returns A list of rooms, which may be empty.
-   */
-  getRooms() {
-    return Object.values(this.rooms);
-  }
-  /**
-   * Permanently delete a room.
-   */
-  removeRoom(roomId) {
-    if (this.rooms[roomId]) {
-      this.rooms[roomId].currentState.removeListener(RoomStateEvent.Members, this.onRoomMember);
-    }
-    delete this.rooms[roomId];
-  }
-  /**
-   * Retrieve a summary of all the rooms.
-   * @returns A summary of each room.
-   */
-  getRoomSummaries() {
-    return Object.values(this.rooms).map(function(room) {
-      return room.summary;
-    });
-  }
-  /**
-   * Store a User.
-   * @param user - The user to store.
-   */
-  storeUser(user) {
-    this.users[user.userId] = user;
-  }
-  /**
-   * Retrieve a User by its' user ID.
-   * @param userId - The user ID.
-   * @returns The user or null.
-   */
-  getUser(userId) {
-    return this.users[userId] || null;
-  }
-  /**
-   * Retrieve all known users.
-   * @returns A list of users, which may be empty.
-   */
-  getUsers() {
-    return Object.values(this.users);
-  }
-  /**
-   * Retrieve scrollback for this room.
-   * @param room - The matrix room
-   * @param limit - The max number of old events to retrieve.
-   * @returns An array of objects which will be at most 'limit'
-   * length and at least 0. The objects are the raw event JSON.
-   */
-  scrollback(room, limit) {
-    return [];
-  }
-  /**
-   * Store events for a room. The events have already been added to the timeline
-   * @param room - The room to store events for.
-   * @param events - The events to store.
-   * @param token - The token associated with these events.
-   * @param toStart - True if these are paginated results.
-   */
-  storeEvents(room, events, token, toStart) {
-  }
-  /**
-   * Store a filter.
-   */
-  storeFilter(filter) {
-    if (!filter?.userId || !filter?.filterId) return;
-    this.filters.getOrCreate(filter.userId).set(filter.filterId, filter);
-  }
-  /**
-   * Retrieve a filter.
-   * @returns A filter or null.
-   */
-  getFilter(userId, filterId) {
-    return this.filters.get(userId)?.get(filterId) || null;
-  }
-  /**
-   * Retrieve a filter ID with the given name.
-   * @param filterName - The filter name.
-   * @returns The filter ID or null.
-   */
-  getFilterIdByName(filterName) {
-    if (!this.localStorage) {
-      return null;
-    }
-    const key = "mxjssdk_memory_filter_" + filterName;
-    try {
-      const value = this.localStorage.getItem(key);
-      if (isValidFilterId(value)) {
-        return value;
-      }
-    } catch {
-    }
-    return null;
-  }
-  /**
-   * Set a filter name to ID mapping.
-   */
-  setFilterIdByName(filterName, filterId) {
-    if (!this.localStorage) {
-      return;
-    }
-    const key = "mxjssdk_memory_filter_" + filterName;
-    try {
-      if (isValidFilterId(filterId)) {
-        this.localStorage.setItem(key, filterId);
-      } else {
-        this.localStorage.removeItem(key);
-      }
-    } catch {
-    }
-  }
-  /**
-   * Store user-scoped account data events.
-   * N.B. that account data only allows a single event per type, so multiple
-   * events with the same type will replace each other.
-   * @param events - The events to store.
-   */
-  storeAccountDataEvents(events) {
-    events.forEach((event) => {
-      const isDeleted = !Object.keys(event.getContent()).length;
-      if (isDeleted) {
-        this.accountData.delete(event.getType());
-      } else {
-        this.accountData.set(event.getType(), event);
-      }
-    });
-  }
-  /**
-   * Get account data event by event type
-   * @param eventType - The event type being queried
-   * @returns the user account_data event of given type, if any
-   */
-  getAccountData(eventType) {
-    return this.accountData.get(eventType);
-  }
-  /**
-   * setSyncData does nothing as there is no backing data store.
-   *
-   * @param syncData - The sync data
-   * @returns An immediately resolved promise.
-   */
-  setSyncData(syncData) {
-    return Promise.resolve();
-  }
-  /**
-   * We never want to save becase we have nothing to save to.
-   *
-   * @returns If the store wants to save
-   */
-  wantsSave() {
-    return false;
-  }
-  /**
-   * Save does nothing as there is no backing data store.
-   * @param force - True to force a save (but the memory
-   *     store still can't save anything)
-   */
-  save(force) {
-    return Promise.resolve();
-  }
-  /**
-   * Startup does nothing as this store doesn't require starting up.
-   * @returns An immediately resolved promise.
-   */
-  startup() {
-    return Promise.resolve();
-  }
-  /**
-   * @returns Promise which resolves with a sync response to restore the
-   * client state to where it was at the last save, or null if there
-   * is no saved sync data.
-   */
-  getSavedSync() {
-    return Promise.resolve(null);
-  }
-  /**
-   * @returns If there is a saved sync, the nextBatch token
-   * for this sync, otherwise null.
-   */
-  getSavedSyncToken() {
-    return Promise.resolve(null);
-  }
-  /**
-   * Delete all data from this store.
-   * @returns An immediately resolved promise.
-   */
-  deleteAllData() {
-    this.rooms = {
-      // roomId: Room
-    };
-    this.users = {
-      // userId: User
-    };
-    this.syncToken = null;
-    this.filters = new MapWithDefault(() => /* @__PURE__ */ new Map());
-    this.accountData = /* @__PURE__ */ new Map();
-    return Promise.resolve();
-  }
-  /**
-   * Returns the out-of-band membership events for this room that
-   * were previously loaded.
-   * @returns the events, potentially an empty array if OOB loading didn't yield any new members
-   * @returns in case the members for this room haven't been stored yet
-   */
-  getOutOfBandMembers(roomId) {
-    return Promise.resolve(this.oobMembers.get(roomId) || null);
-  }
-  /**
-   * Stores the out-of-band membership events for this room. Note that
-   * it still makes sense to store an empty array as the OOB status for the room is
-   * marked as fetched, and getOutOfBandMembers will return an empty array instead of null
-   * @param membershipEvents - the membership events to store
-   * @returns when all members have been stored
-   */
-  setOutOfBandMembers(roomId, membershipEvents) {
-    this.oobMembers.set(roomId, membershipEvents);
-    return Promise.resolve();
-  }
-  clearOutOfBandMembers(roomId) {
-    this.oobMembers.delete(roomId);
-    return Promise.resolve();
-  }
-  getClientOptions() {
-    return Promise.resolve(this.clientOptions);
-  }
-  storeClientOptions(options) {
-    this.clientOptions = Object.assign({}, options);
-    return Promise.resolve();
-  }
-  async getPendingEvents(roomId) {
-    return this.pendingEvents[roomId] ?? [];
-  }
-  async setPendingEvents(roomId, events) {
-    this.pendingEvents[roomId] = events;
-  }
-  saveToDeviceBatches(batches) {
-    for (const batch of batches) {
-      this.pendingToDeviceBatches.push({
-        id: this.nextToDeviceBatchId++,
-        eventType: batch.eventType,
-        txnId: batch.txnId,
-        batch: batch.batch
-      });
-    }
-    return Promise.resolve();
-  }
-  async getOldestToDeviceBatch() {
-    if (this.pendingToDeviceBatches.length === 0) return null;
-    return this.pendingToDeviceBatches[0];
-  }
-  removeToDeviceBatch(id) {
-    this.pendingToDeviceBatches = this.pendingToDeviceBatches.filter((batch) => batch.id !== id);
-    return Promise.resolve();
-  }
-  async getUserProfile(userId) {
-    return this.userProfiles.get(userId);
-  }
-  async storeUserProfiles(userProfiles) {
-    userProfiles.forEach((profile, userId) => this.userProfiles.set(userId, profile));
-  }
-  async removeUserProfiles(userIds) {
-    userIds.forEach((userId) => this.userProfiles.delete(userId));
-  }
-  async removeEventsFromRoom(roomId, eventIds) {
-  }
-  async destroy() {
-  }
-};
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_scheduler();
-init_client();
-
-// node_modules/matrix-js-sdk/lib/embedded.js
-init_objectSpread2();
-init_defineProperty();
-var import_matrix_widget_api = __toESM(require_lib3(), 1);
-init_event2();
-init_requests();
-init_event();
-init_logger();
-init_client();
-init_sync2();
-init_sliding_sync_sdk();
-init_errors();
-init_user();
-init_utils();
-var RoomWidgetClientEvent = /* @__PURE__ */ (function(RoomWidgetClientEvent2) {
-  RoomWidgetClientEvent2["PendingEventsChanged"] = "PendingEvent.pendingEventsChanged";
-  return RoomWidgetClientEvent2;
-})({});
-var RoomWidgetClient = class extends MatrixClient {
-  /**
-   *
-   * @param widgetApi - The widget api to use for communication.
-   * @param capabilities - The capabilities the widget client will request.
-   * @param roomId - The room id the widget is associated with.
-   * @param opts - The configuration options for this client.
-   * @param sendContentLoaded - Whether to send a content loaded widget action immediately after initial setup.
-   *   Set to `false` if the widget uses `waitForIFrameLoad=true` (in this case the client does not expect a content loaded action at all),
-   *   or if the the widget wants to send the `ContentLoaded` action at a later point in time after the initial setup.
-   */
-  constructor(widgetApi, capabilities, _roomId, opts, sendContentLoaded) {
-    super(opts);
-    _defineProperty(this, "room", void 0);
-    _defineProperty(this, "widgetApiReady", void 0);
-    _defineProperty(this, "roomStateSynced", void 0);
-    _defineProperty(this, "lifecycle", void 0);
-    _defineProperty(this, "syncState", null);
-    _defineProperty(this, "pendingSendingEventsTxId", []);
-    _defineProperty(this, "eventEmitter", new TypedEventEmitter());
-    _defineProperty(this, "syncApiResolver", Promise.withResolvers());
-    _defineProperty(this, "updateTxId", async (event) => {
-      if (
-        // This could theoretically be an event send by this device
-        // In that case we need to update the txId of the event because the embedded client/widget
-        // knows this event with a different transaction Id than what was used by the host client.
-        event.getSender() === this.getUserId() && // We optimize by not blocking events from types that we have not send
-        // with this client.
-        this.pendingSendingEventsTxId.some((p) => event.getType() === p.type)
-      ) {
-        let matchingTxId = this.pendingSendingEventsTxId.find((p) => p.id === event.getId())?.txId;
-        while (!matchingTxId && this.pendingSendingEventsTxId.length > 0) {
-          await new Promise((resolve) => this.eventEmitter.once(RoomWidgetClientEvent.PendingEventsChanged, () => resolve()));
-          matchingTxId = this.pendingSendingEventsTxId.find((p) => p.id === event.getId())?.txId;
-        }
-        if (matchingTxId) {
-          event.setTxnId(matchingTxId);
-          event.setUnsigned(_objectSpread2(_objectSpread2({}, event.getUnsigned()), {}, {
-            transaction_id: matchingTxId
-          }));
-        }
-        this.pendingSendingEventsTxId = this.pendingSendingEventsTxId.filter((p) => p.id !== event.getId());
-        if (this.pendingSendingEventsTxId.length === 0) {
-          this.eventEmitter.emit(RoomWidgetClientEvent.PendingEventsChanged);
-        }
-      }
-    });
-    _defineProperty(this, "onEvent", async (ev) => {
-      ev.preventDefault();
-      if (ev.detail.data.room_id === this.roomId) {
-        const event = new MatrixEvent(ev.detail.data);
-        await this.updateTxId(event);
-        await this.syncApiResolver.promise;
-        if (this.syncApi instanceof SyncApi) {
-          if (await this.supportUpdateState()) {
-            await this.syncApi.injectRoomEvents(this.room, void 0, [], [event]);
-          } else {
-            await this.syncApi.injectRoomEvents(this.room, [], void 0, [event]);
-          }
-        } else {
-          if (await this.supportUpdateState()) {
-            await this.syncApi.injectRoomEvents(this.room, [], [event]);
-          } else {
-            logger.error("slididng sync cannot be used in widget mode if the client widget driver does not support the version: 'org.matrix.msc2762_update_state'");
-          }
-        }
-        this.emit(ClientEvent.Event, event);
-        if (event.unstableStickyInfo !== void 0) this.room._unstable_addStickyEvents([event]);
-        this.setSyncState(SyncState.Syncing);
-        logger.info(`Received event ${event.getId()} ${event.getType()}`);
-      } else {
-        const {
-          event_id: eventId,
-          room_id: roomId
-        } = ev.detail.data;
-        logger.info(`Received event ${eventId} for a different room ${roomId}; discarding`);
-      }
-      await this.ack(ev);
-    });
-    _defineProperty(this, "onToDevice", async (ev) => {
-      ev.preventDefault();
-      const event = new MatrixEvent({
-        type: ev.detail.data.type,
-        sender: ev.detail.data.sender,
-        content: ev.detail.data.content
-      });
-      if (ev.detail.data.encrypted) event.makeEncrypted(EventType.RoomMessageEncrypted, {}, "", "");
-      this.emit(ClientEvent.ToDeviceEvent, event);
-      this.setSyncState(SyncState.Syncing);
-      await this.ack(ev);
-    });
-    _defineProperty(this, "onStateUpdate", async (ev) => {
-      ev.preventDefault();
-      if (!await this.supportUpdateState()) {
-        logger.warn("received update_state widget action but the widget driver did not claim to support 'org.matrix.msc2762_update_state'");
-      }
-      await this.syncApiResolver.promise;
-      for (const rawEvent of ev.detail.data.state) {
-        if (rawEvent.room_id === this.roomId) {
-          const event = new MatrixEvent(rawEvent);
-          if (this.syncApi instanceof SyncApi) {
-            await this.syncApi.injectRoomEvents(this.room, void 0, [event]);
-          } else {
-            await this.syncApi.injectRoomEvents(this.room, [event]);
-          }
-          logger.debug(`Updated state entry ${event.getType()} ${event.getStateKey()} to ${event.getId()}`);
-        } else {
-          const {
-            event_id: eventId,
-            room_id: roomId
-          } = ev.detail.data;
-          logger.info(`Received state entry ${eventId} for a different room ${roomId}; discarding`);
-        }
-      }
-      await this.ack(ev);
-    });
-    this.widgetApi = widgetApi;
-    this.capabilities = capabilities;
-    this.roomId = _roomId;
-    const transportSend = this.widgetApi.transport.send.bind(this.widgetApi.transport);
-    this.widgetApi.transport.send = async (action, data) => {
-      try {
-        return await transportSend(action, data);
-      } catch (error) {
-        processAndThrow(error);
-      }
-    };
-    const transportSendComplete = this.widgetApi.transport.sendComplete.bind(this.widgetApi.transport);
-    this.widgetApi.transport.sendComplete = async (action, data) => {
-      try {
-        return await transportSendComplete(action, data);
-      } catch (error) {
-        processAndThrow(error);
-      }
-    };
-    this.widgetApiReady = new Promise((resolve) => this.widgetApi.once("ready", resolve));
-    this.roomStateSynced = capabilities.receiveState?.length ? new Promise((resolve) => this.widgetApi.once(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.UpdateState}`, resolve)) : Promise.resolve();
-    this.requestInitialCapabilities(capabilities, _roomId);
-    widgetApi.on(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendEvent}`, this.onEvent);
-    widgetApi.on(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendToDevice}`, this.onToDevice);
-    widgetApi.on(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.UpdateState}`, this.onStateUpdate);
-    widgetApi.start();
-    if (sendContentLoaded) widgetApi.sendContentLoaded();
-  }
-  requestInitialCapabilities(capabilities, roomId) {
-    if (capabilities.sendEvent?.length || capabilities.receiveEvent?.length || capabilities.sendMessage === true || Array.isArray(capabilities.sendMessage) && capabilities.sendMessage.length || capabilities.receiveMessage === true || Array.isArray(capabilities.receiveMessage) && capabilities.receiveMessage.length || capabilities.sendState?.length || capabilities.receiveState?.length) {
-      this.widgetApi.requestCapabilityForRoomTimeline(roomId);
-    }
-    capabilities.sendEvent?.forEach((eventType) => this.widgetApi.requestCapabilityToSendEvent(eventType));
-    capabilities.receiveEvent?.forEach((eventType) => this.widgetApi.requestCapabilityToReceiveEvent(eventType));
-    if (capabilities.sendMessage === true) {
-      this.widgetApi.requestCapabilityToSendMessage();
-    } else if (Array.isArray(capabilities.sendMessage)) {
-      capabilities.sendMessage.forEach((msgType) => this.widgetApi.requestCapabilityToSendMessage(msgType));
-    }
-    if (capabilities.receiveMessage === true) {
-      this.widgetApi.requestCapabilityToReceiveMessage();
-    } else if (Array.isArray(capabilities.receiveMessage)) {
-      capabilities.receiveMessage.forEach((msgType) => this.widgetApi.requestCapabilityToReceiveMessage(msgType));
-    }
-    capabilities.sendState?.forEach(({
-      eventType,
-      stateKey
-    }) => this.widgetApi.requestCapabilityToSendState(eventType, stateKey));
-    capabilities.receiveState?.forEach(({
-      eventType,
-      stateKey
-    }) => this.widgetApi.requestCapabilityToReceiveState(eventType, stateKey));
-    capabilities.sendToDevice?.forEach((eventType) => this.widgetApi.requestCapabilityToSendToDevice(eventType));
-    capabilities.receiveToDevice?.forEach((eventType) => this.widgetApi.requestCapabilityToReceiveToDevice(eventType));
-    if (capabilities.sendDelayedEvents && (capabilities.sendEvent?.length || capabilities.sendMessage === true || Array.isArray(capabilities.sendMessage) && capabilities.sendMessage.length || capabilities.sendState?.length)) {
-      this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4157SendDelayedEvent);
-    }
-    if (capabilities.updateDelayedEvents) {
-      this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4157UpdateDelayedEvent);
-    }
-    if (capabilities.sendSticky) {
-      this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4407SendStickyEvent);
-    }
-    if (capabilities.receiveSticky) {
-      this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC4407ReceiveStickyEvent);
-    }
-    if (capabilities.turnServers) {
-      this.widgetApi.requestCapability(import_matrix_widget_api.MatrixCapabilities.MSC3846TurnServers);
-    }
-  }
-  async supportUpdateState() {
-    return (await this.widgetApi.getClientVersions()).includes(import_matrix_widget_api.UnstableApiVersion.MSC2762_UPDATE_STATE);
-  }
-  async startClient(opts = {}) {
-    this.lifecycle = new AbortController();
-    const userId = this.getUserId();
-    if (userId) {
-      this.store.storeUser(new User(userId));
-    }
-    if (opts.slidingSync) {
-      this.syncApi = new SlidingSyncSdk(opts.slidingSync, this, opts, this.buildSyncApiOptions());
-    } else {
-      this.syncApi = new SyncApi(this, opts, this.buildSyncApiOptions());
-    }
-    this.syncApiResolver.resolve();
-    this.room = this.syncApi.createRoom(this.roomId);
-    this.store.storeRoom(this.room);
-    await this.widgetApiReady;
-    if (await this.supportUpdateState()) {
-      await this.roomStateSynced;
-    } else {
-      await Promise.all(this.capabilities.receiveState?.map(async ({
-        eventType,
-        stateKey
-      }) => {
-        const rawEvents = await this.widgetApi.readStateEvents(eventType, void 0, stateKey, [this.roomId]);
-        const events = rawEvents.map((rawEvent) => new MatrixEvent(rawEvent));
-        if (this.syncApi instanceof SyncApi) {
-          await this.syncApi.injectRoomEvents(this.room, void 0, events);
-        } else {
-          await this.syncApi.injectRoomEvents(this.room, events);
-        }
-        events.forEach((event) => {
-          this.emit(ClientEvent.Event, event);
-          logger.info(`Backfilled event ${event.getId()} ${event.getType()} ${event.getStateKey()}`);
-        });
-      }) ?? []);
-    }
-    if (opts.clientWellKnownPollPeriod !== void 0) {
-      this.clientWellKnownIntervalID = setInterval(() => {
-        this.fetchClientWellKnown();
-      }, 1e3 * opts.clientWellKnownPollPeriod);
-      this.fetchClientWellKnown();
-    }
-    this.setSyncState(SyncState.Syncing);
-    logger.info("Finished initial sync");
-    this.matrixRTC.start();
-    if (this.capabilities.turnServers) this.watchTurnServers();
-  }
-  stopClient() {
-    this.widgetApi.off(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendEvent}`, this.onEvent);
-    this.widgetApi.off(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.SendToDevice}`, this.onToDevice);
-    this.widgetApi.off(`action:${import_matrix_widget_api.WidgetApiToWidgetAction.UpdateState}`, this.onStateUpdate);
-    super.stopClient();
-    this.lifecycle.abort();
-  }
-  async joinRoom(roomIdOrAlias) {
-    if (roomIdOrAlias === this.roomId) return this.room;
-    throw new Error(`Unknown room: ${roomIdOrAlias}`);
-  }
-  async encryptAndSendEvent(room, event, delayOptsOrQuery, queryDict) {
-    let queryOpts = queryDict;
-    let delayOpts;
-    if (delayOptsOrQuery && isSendDelayedEventRequestOpts(delayOptsOrQuery)) {
-      delayOpts = delayOptsOrQuery;
-    } else if (!queryOpts) {
-      queryOpts = delayOptsOrQuery;
-    }
-    const stickyDurationMs = queryOpts?.["org.matrix.msc4354.sticky_duration_ms"];
-    if (stickyDurationMs !== void 0 && typeof stickyDurationMs !== "number") {
-      throw new Error("Sticky duration must be a number when defined");
-    }
-    const stickyDurationMsAsNumber = stickyDurationMs;
-    const content = event.event.redacts ? _objectSpread2(_objectSpread2({}, event.getContent()), {}, {
-      redacts: event.event.redacts
-    }) : event.getContent();
-    if (delayOpts) {
-      const response2 = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId, "delay" in delayOpts ? delayOpts.delay : void 0, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : void 0, stickyDurationMsAsNumber).catch(timeoutToConnectionError);
-      return this.validateSendDelayedEventResponse(response2);
-    }
-    const txId = event.getTxnId();
-    if (txId) this.pendingSendingEventsTxId.push({
-      type: event.getType(),
-      id: void 0,
-      txId
-    });
-    let response;
-    try {
-      response = await this.widgetApi.sendRoomEvent(event.getType(), content, room.roomId, void 0, void 0, stickyDurationMsAsNumber).catch(timeoutToConnectionError);
-    } catch (e) {
-      this.updatePendingEventStatus(room, event, EventStatus.NOT_SENT);
-      throw e;
-    }
-    room.updatePendingEvent(event, EventStatus.SENT, response.event_id);
-    this.pendingSendingEventsTxId.forEach((p) => {
-      if (p.txId === txId) p.id = response.event_id;
-    });
-    this.eventEmitter.emit(RoomWidgetClientEvent.PendingEventsChanged);
-    return {
-      event_id: response.event_id
-    };
-  }
-  async sendStateEvent(roomId, eventType, content, stateKey = "") {
-    const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId).catch(timeoutToConnectionError);
-    if (response.event_id === void 0) {
-      throw new Error("'event_id' absent from response to an event request");
-    }
-    return {
-      event_id: response.event_id
-    };
-  }
-  /**
-   * @experimental This currently relies on an unstable MSC (MSC4140).
-   */
-  // eslint-disable-next-line
-  async _unstable_sendDelayedStateEvent(roomId, delayOpts, eventType, content, stateKey = "") {
-    if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
-      throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "sendDelayedStateEvent");
-    }
-    const response = await this.widgetApi.sendStateEvent(eventType, stateKey, content, roomId, "delay" in delayOpts ? delayOpts.delay : void 0, "parent_delay_id" in delayOpts ? delayOpts.parent_delay_id : void 0).catch(timeoutToConnectionError);
-    return this.validateSendDelayedEventResponse(response);
-  }
-  validateSendDelayedEventResponse(response) {
-    if (response.delay_id === void 0) {
-      throw new Error("'delay_id' absent from response to a delayed event request");
-    }
-    return {
-      delay_id: response.delay_id
-    };
-  }
-  /**
-   * @experimental This currently relies on an unstable MSC (MSC4140).
-   * @deprecated Instead use one of:
-   * - {@link _unstable_cancelScheduledDelayedEvent}
-   * - {@link _unstable_restartScheduledDelayedEvent}
-   * - {@link _unstable_sendScheduledDelayedEvent}
-   */
-  // eslint-disable-next-line @typescript-eslint/naming-convention
-  async _unstable_updateDelayedEvent(delayId, action) {
-    if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
-      throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "updateDelayedEvent");
-    }
-    switch (action) {
-      case UpdateDelayedEventAction.Cancel:
-        await this.widgetApi.cancelScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
-        break;
-      case UpdateDelayedEventAction.Restart:
-        await this.widgetApi.restartScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
-        break;
-      case UpdateDelayedEventAction.Send:
-        await this.widgetApi.sendScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
-        break;
-    }
-    return {};
-  }
-  /**
-   * @experimental This currently relies on an unstable MSC (MSC4140).
-   */
-  // eslint-disable-next-line @typescript-eslint/naming-convention
-  async _unstable_cancelScheduledDelayedEvent(delayId) {
-    if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
-      throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "cancelScheduledDelayedEvent");
-    }
-    await this.widgetApi.cancelScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
-    return {};
-  }
-  /**
-   * @experimental This currently relies on an unstable MSC (MSC4140).
-   */
-  // eslint-disable-next-line @typescript-eslint/naming-convention
-  async _unstable_restartScheduledDelayedEvent(delayId) {
-    if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
-      throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "restartScheduledDelayedEvent");
-    }
-    await this.widgetApi.restartScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
-    return {};
-  }
-  /**
-   * @experimental This currently relies on an unstable MSC (MSC4140).
-   */
-  // eslint-disable-next-line @typescript-eslint/naming-convention
-  async _unstable_sendScheduledDelayedEvent(delayId) {
-    if (!await this.doesServerSupportUnstableFeature(UNSTABLE_MSC4140_DELAYED_EVENTS)) {
-      throw new UnsupportedDelayedEventsEndpointError("Server does not support the delayed events API", "sendScheduledDelayedEvent");
-    }
-    await this.widgetApi.sendScheduledDelayedEvent(delayId).catch(timeoutToConnectionError);
-    return {};
-  }
-  /**
-   * by {@link MatrixClient.encryptAndSendToDevice}.
-   */
-  async encryptAndSendToDevice(eventType, devices, payload) {
-    const contentMap = new MapWithDefault(() => /* @__PURE__ */ new Map());
-    for (const {
-      userId,
-      deviceId
-    } of devices) {
-      contentMap.getOrCreate(userId).set(deviceId, payload);
-    }
-    await this.widgetApi.sendToDevice(eventType, true, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
-  }
-  async sendToDevice(eventType, contentMap) {
-    await this.widgetApi.sendToDevice(eventType, false, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
-    return {};
-  }
-  async getOpenIdToken() {
-    const token = await this.widgetApi.requestOpenIDConnectToken().catch(timeoutToConnectionError);
-    return {
-      access_token: token.access_token,
-      expires_in: token.expires_in,
-      matrix_server_name: token.matrix_server_name,
-      token_type: token.token_type
-    };
-  }
-  async queueToDevice({
-    eventType,
-    batch
-  }) {
-    const contentMap = new MapWithDefault(() => /* @__PURE__ */ new Map());
-    for (const {
-      userId,
-      deviceId,
-      payload
-    } of batch) {
-      contentMap.getOrCreate(userId).set(deviceId, payload);
-    }
-    await this.widgetApi.sendToDevice(eventType, false, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
-  }
-  /**
-   * Send an event to a specific list of devices via the widget API. Optionally encrypts the event.
-   *
-   * If you are using a full MatrixClient you would be calling {@link MatrixClient.getCrypto().encryptToDeviceMessages()} followed
-   * by {@link MatrixClient.queueToDevice}.
-   *
-   * However, this is combined into a single step when running as an embedded widget client. So, we expose this method for those
-   * that need it.
-   *
-   * @param eventType - Type of the event to send.
-   * @param encrypted - Whether the event should be encrypted.
-   * @param contentMap - The content to send. Map from user_id to device_id to content object.
-   */
-  async sendToDeviceViaWidgetApi(eventType, encrypted, contentMap) {
-    await this.widgetApi.sendToDevice(eventType, encrypted, recursiveMapToObject(contentMap)).catch(timeoutToConnectionError);
-  }
-  // Overridden since we get TURN servers automatically over the widget API,
-  // and this method would otherwise complain about missing an access token
-  async checkTurnServers() {
-    return this.turnServers.length > 0;
-  }
-  // Overridden since we 'sync' manually without the sync API
-  getSyncState() {
-    return this.syncState;
-  }
-  setSyncState(state) {
-    const oldState = this.syncState;
-    this.syncState = state;
-    this.emit(ClientEvent.Sync, state, oldState);
-  }
-  async ack(ev) {
-    this.widgetApi.transport.reply(ev.detail, {});
-  }
-  async watchTurnServers() {
-    const servers = this.widgetApi.getTurnServers();
-    const onClientStopped = () => {
-      servers.return(void 0);
-    };
-    this.lifecycle.signal.addEventListener("abort", onClientStopped);
-    try {
-      for await (const server of servers) {
-        this.turnServers = [{
-          urls: server.uris,
-          username: server.username,
-          credential: server.password
-        }];
-        this.emit(ClientEvent.TurnServers, this.turnServers);
-        logger.log(`Received TURN server: ${server.uris}`);
-      }
-    } catch (e) {
-      logger.warn("Error watching TURN servers", e);
-    } finally {
-      this.lifecycle.signal.removeEventListener("abort", onClientStopped);
-    }
-  }
-};
-function processAndThrow(error) {
-  if (error instanceof import_matrix_widget_api.WidgetApiResponseError && error.data.matrix_api_error) {
-    throw MatrixError.fromWidgetApiErrorData(error.data.matrix_api_error);
-  } else {
-    throw error;
-  }
-}
-function timeoutToConnectionError(error) {
-  if (error instanceof Error && error.message === "Request timed out") {
-    throw new ConnectionError("widget api timeout");
-  }
-  throw error;
-}
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_client();
-init_serverCapabilities();
-init_http_api();
-init_autodiscovery();
-
-// node_modules/matrix-js-sdk/lib/sync-accumulator.js
-init_defineProperty();
-init_logger();
-init_utils();
-init_event2();
-init_sync();
-
-// node_modules/matrix-js-sdk/lib/receipt-accumulator.js
-init_defineProperty();
-init_event();
-init_utils();
-var ReceiptAccumulator = class {
-  constructor() {
-    _defineProperty(this, "unthreadedReadReceipts", /* @__PURE__ */ new Map());
-    _defineProperty(this, "threadedReadReceipts", new MapWithDefault(() => /* @__PURE__ */ new Map()));
-  }
-  /**
-   * Provide an unthreaded receipt for this user. Overwrites any other
-   * unthreaded receipt we have for this user.
-   */
-  setUnthreaded(userId, receipt) {
-    this.unthreadedReadReceipts.set(userId, receipt);
-  }
-  /**
-   * Provide a receipt for this user in this thread. Overwrites any other
-   * receipt we have for this user in this thread.
-   */
-  setThreaded(threadId, userId, receipt) {
-    this.threadedReadReceipts.getOrCreate(threadId).set(userId, receipt);
-  }
-  /**
-   * @returns an iterator of pairs of [userId, AccumulatedReceipt] - all the
-   *          most recently-received unthreaded receipts for each user.
-   * @yields pairs of [userId, AccumulatedReceipt]
-   */
-  allUnthreaded() {
-    return this.unthreadedReadReceipts.entries();
-  }
-  /**
-   * @returns an iterator of pairs of [userId, AccumulatedReceipt] - all the
-   *          most recently-received threaded receipts for each user, in all
-   *          threads.
-   * @yields pairs of [userId, AccumulatedReceipt]
-   */
-  *allThreaded() {
-    for (const receiptsForThread of this.threadedReadReceipts.values()) {
-      for (const e of receiptsForThread.entries()) {
-        yield e;
-      }
-    }
-  }
-  /**
-   * Given a list of ephemeral events, find the receipts and store the
-   * relevant ones to be returned later from buildAccumulatedReceiptEvent().
-   */
-  consumeEphemeralEvents(events) {
-    events?.forEach((e) => {
-      if (e.type !== EventType.Receipt || !e.content) {
-        return;
-      }
-      Object.keys(e.content).forEach((eventId) => {
-        Object.entries(e.content[eventId]).forEach(([key, value]) => {
-          if (!isSupportedReceiptType(key)) return;
-          for (const userId of Object.keys(value)) {
-            const data = e.content[eventId][key][userId];
-            const receipt = {
-              data: e.content[eventId][key][userId],
-              type: key,
-              eventId
-            };
-            if (!data.thread_id) {
-              this.setUnthreaded(userId, receipt);
-            } else {
-              this.setThreaded(data.thread_id, userId, receipt);
-            }
-          }
-        });
-      });
-    });
-  }
-  /**
-   * Build a receipt event that contains all relevant information for this
-   * room, taking the most recently received receipt for each user in an
-   * unthreaded context, and in each thread.
-   */
-  buildAccumulatedReceiptEvent(roomId) {
-    const receiptEvent = {
-      type: EventType.Receipt,
-      room_id: roomId,
-      content: {
-        // $event_id: { "m.read": { $user_id: $json } }
-      }
-    };
-    const receiptEventContent = new MapWithDefault(() => new MapWithDefault(() => /* @__PURE__ */ new Map()));
-    for (const [userId, receiptData] of this.allUnthreaded()) {
-      receiptEventContent.getOrCreate(receiptData.eventId).getOrCreate(receiptData.type).set(userId, receiptData.data);
-    }
-    for (const [userId, receiptData] of this.allThreaded()) {
-      receiptEventContent.getOrCreate(receiptData.eventId).getOrCreate(receiptData.type).set(userId, receiptData.data);
-    }
-    receiptEvent.content = recursiveMapToObject(receiptEventContent);
-    return receiptEventContent.size > 0 ? receiptEvent : null;
-  }
-};
-
-// node_modules/matrix-js-sdk/lib/sync-accumulator.js
-var Category = /* @__PURE__ */ (function(Category2) {
-  Category2["Invite"] = "invite";
-  Category2["Leave"] = "leave";
-  Category2["Join"] = "join";
-  Category2["Knock"] = "knock";
-  return Category2;
-})({});
-function isTaggedEvent(event) {
-  return "_localTs" in event && event["_localTs"] !== void 0;
-}
-var SyncAccumulator = class {
-  constructor(opts = {}) {
-    _defineProperty(this, "accountData", {});
-    _defineProperty(this, "inviteRooms", {});
-    _defineProperty(this, "knockRooms", {});
-    _defineProperty(this, "joinRooms", {});
-    _defineProperty(this, "nextBatch", null);
-    this.opts = opts;
-    this.opts.maxTimelineEntries = this.opts.maxTimelineEntries || 50;
-  }
-  accumulate(syncResponse, fromDatabase = false) {
-    this.accumulateRooms(syncResponse, fromDatabase);
-    this.accumulateAccountData(syncResponse);
-    this.nextBatch = syncResponse.next_batch;
-  }
-  accumulateAccountData(syncResponse) {
-    if (!syncResponse.account_data || !syncResponse.account_data.events) {
-      return;
-    }
-    syncResponse.account_data.events.forEach((e) => {
-      this.accountData[e.type] = e;
-    });
-  }
-  /**
-   * Accumulate incremental /sync room data.
-   * @param syncResponse - the complete /sync JSON
-   * @param fromDatabase - True if the sync response is one saved to the database
-   */
-  accumulateRooms(syncResponse, fromDatabase = false) {
-    if (!syncResponse.rooms) {
-      return;
-    }
-    if (syncResponse.rooms.invite) {
-      Object.keys(syncResponse.rooms.invite).forEach((roomId) => {
-        this.accumulateRoom(roomId, Category.Invite, syncResponse.rooms.invite[roomId], fromDatabase);
-      });
-    }
-    if (syncResponse.rooms.join) {
-      Object.keys(syncResponse.rooms.join).forEach((roomId) => {
-        this.accumulateRoom(roomId, Category.Join, syncResponse.rooms.join[roomId], fromDatabase);
-      });
-    }
-    if (syncResponse.rooms.leave) {
-      Object.keys(syncResponse.rooms.leave).forEach((roomId) => {
-        this.accumulateRoom(roomId, Category.Leave, syncResponse.rooms.leave[roomId], fromDatabase);
-      });
-    }
-    if (syncResponse.rooms.knock) {
-      Object.keys(syncResponse.rooms.knock).forEach((roomId) => {
-        this.accumulateRoom(roomId, Category.Knock, syncResponse.rooms.knock[roomId], fromDatabase);
-      });
-    }
-  }
-  accumulateRoom(roomId, category, data, fromDatabase = false) {
-    switch (category) {
-      case Category.Invite:
-        if (this.knockRooms[roomId]) {
-          delete this.knockRooms[roomId];
-        }
-        this.accumulateInviteState(roomId, data);
-        break;
-      case Category.Knock:
-        this.accumulateKnockState(roomId, data);
-        break;
-      case Category.Join:
-        if (this.knockRooms[roomId]) {
-          delete this.knockRooms[roomId];
-        } else if (this.inviteRooms[roomId]) {
-          delete this.inviteRooms[roomId];
-        }
-        this.accumulateJoinState(roomId, data, fromDatabase);
-        break;
-      case Category.Leave:
-        if (this.knockRooms[roomId]) {
-          delete this.knockRooms[roomId];
-        } else if (this.inviteRooms[roomId]) {
-          delete this.inviteRooms[roomId];
-        } else {
-          delete this.joinRooms[roomId];
-        }
-        break;
-      default:
-        logger.error("Unknown cateogory: ", category);
-    }
-  }
-  accumulateInviteState(roomId, data) {
-    if (!data.invite_state || !data.invite_state.events) {
-      return;
-    }
-    if (!this.inviteRooms[roomId]) {
-      this.inviteRooms[roomId] = {
-        invite_state: data.invite_state
-      };
-      return;
-    }
-    const currentData = this.inviteRooms[roomId];
-    data.invite_state.events.forEach((e) => {
-      let hasAdded = false;
-      for (let i = 0; i < currentData.invite_state.events.length; i++) {
-        const current = currentData.invite_state.events[i];
-        if (current.type === e.type && current.state_key == e.state_key) {
-          currentData.invite_state.events[i] = e;
-          hasAdded = true;
-        }
-      }
-      if (!hasAdded) {
-        currentData.invite_state.events.push(e);
-      }
-    });
-  }
-  accumulateKnockState(roomId, data) {
-    if (!data.knock_state || !data.knock_state.events) {
-      return;
-    }
-    if (!this.knockRooms[roomId]) {
-      this.knockRooms[roomId] = {
-        knock_state: data.knock_state
-      };
-      return;
-    }
-    const currentData = this.knockRooms[roomId];
-    data.knock_state.events.forEach((e) => {
-      let hasAdded = false;
-      for (let i = 0; i < currentData.knock_state.events.length; i++) {
-        const current = currentData.knock_state.events[i];
-        if (current.type === e.type && current.state_key == e.state_key) {
-          currentData.knock_state.events[i] = e;
-          hasAdded = true;
-        }
-      }
-      if (!hasAdded) {
-        currentData.knock_state.events.push(e);
-      }
-    });
-  }
-  // Accumulate timeline and state events in a room.
-  accumulateJoinState(roomId, data, fromDatabase = false) {
-    const now = Date.now();
-    if (!this.joinRooms[roomId]) {
-      this.joinRooms[roomId] = {
-        _currentState: /* @__PURE__ */ Object.create(null),
-        _timeline: [],
-        _accountData: /* @__PURE__ */ Object.create(null),
-        _unreadNotifications: {},
-        _unreadThreadNotifications: {},
-        _summary: {},
-        _receipts: new ReceiptAccumulator(),
-        _stickyEvents: []
-      };
-    }
-    const currentData = this.joinRooms[roomId];
-    if (data.account_data && data.account_data.events) {
-      data.account_data.events.forEach((e) => {
-        currentData._accountData[e.type] = e;
-      });
-    }
-    if (data.unread_notifications) {
-      currentData._unreadNotifications = data.unread_notifications;
-    }
-    currentData._unreadThreadNotifications = data[UNREAD_THREAD_NOTIFICATIONS.stable] ?? data[UNREAD_THREAD_NOTIFICATIONS.unstable] ?? void 0;
-    if (data.summary) {
-      const HEROES_KEY = "m.heroes";
-      const INVITED_COUNT_KEY = "m.invited_member_count";
-      const JOINED_COUNT_KEY = "m.joined_member_count";
-      const acc = currentData._summary;
-      const sum = data.summary;
-      acc[HEROES_KEY] = sum[HEROES_KEY] ?? acc[HEROES_KEY];
-      acc[JOINED_COUNT_KEY] = sum[JOINED_COUNT_KEY] ?? acc[JOINED_COUNT_KEY];
-      acc[INVITED_COUNT_KEY] = sum[INVITED_COUNT_KEY] ?? acc[INVITED_COUNT_KEY];
-    }
-    currentData._receipts.consumeEphemeralEvents(data.ephemeral?.events);
-    if (data.timeline && data.timeline.limited) {
-      currentData._timeline = [];
-    }
-    data.state?.events?.forEach((e) => {
-      setState(currentData._currentState, e);
-    });
-    data["org.matrix.msc4222.state_after"]?.events?.forEach((e) => {
-      setState(currentData._currentState, e);
-    });
-    data.timeline?.events?.forEach((e, index) => {
-      if (!data["org.matrix.msc4222.state_after"]) {
-        setState(currentData._currentState, e);
-      }
-      let transformedEvent;
-      if (!fromDatabase) {
-        transformedEvent = Object.assign({}, e);
-        if (transformedEvent.unsigned !== void 0) {
-          transformedEvent.unsigned = Object.assign({}, transformedEvent.unsigned);
-        }
-        const age = e.unsigned?.age;
-        if (age !== void 0) transformedEvent._localTs = Date.now() - age;
-      } else {
-        transformedEvent = e;
-      }
-      currentData._timeline.push({
-        event: transformedEvent,
-        token: index === 0 ? data.timeline.prev_batch ?? null : null
-      });
-    });
-    currentData._stickyEvents = currentData._stickyEvents.filter(({
-      expiresTs
-    }) => expiresTs > now);
-    if (data.msc4354_sticky?.events) {
-      currentData._stickyEvents = currentData._stickyEvents.concat(data.msc4354_sticky.events.map((event) => {
-        const cappedDuration = Math.min(event.msc4354_sticky.duration_ms, MAX_STICKY_DURATION_MS);
-        const createdTs = Math.min(event.origin_server_ts, now);
-        return {
-          event,
-          expiresTs: cappedDuration + createdTs
-        };
-      }));
-    }
-    if (currentData._timeline.length > this.opts.maxTimelineEntries) {
-      const startIndex = currentData._timeline.length - this.opts.maxTimelineEntries;
-      for (let i = startIndex; i < currentData._timeline.length; i++) {
-        if (currentData._timeline[i].token) {
-          currentData._timeline = currentData._timeline.slice(i, currentData._timeline.length);
-          break;
-        }
-      }
-    }
-  }
-  /**
-   * Return everything under the 'rooms' key from a /sync response which
-   * represents all room data that should be stored. This should be paired
-   * with the sync token which represents the most recent /sync response
-   * provided to accumulate().
-   * @param forDatabase - True to generate a sync to be saved to storage
-   * @returns An object with a "nextBatch", "roomsData" and "accountData"
-   * keys.
-   * The "nextBatch" key is a string which represents at what point in the
-   * /sync stream the accumulator reached. This token should be used when
-   * restarting a /sync stream at startup. Failure to do so can lead to missing
-   * events. The "roomsData" key is an Object which represents the entire
-   * /sync response from the 'rooms' key onwards. The "accountData" key is
-   * a list of raw events which represent global account data.
-   */
-  getJSON(forDatabase = false) {
-    const data = {
-      join: {},
-      invite: {},
-      knock: {},
-      // always empty. This is set by /sync when a room was previously
-      // in 'invite' or 'join'. On fresh startup, the client won't know
-      // about any previous room being in 'invite' or 'join' so we can
-      // just omit mentioning it at all, even if it has previously come
-      // down /sync.
-      // The notable exception is when a client is kicked or banned:
-      // we may want to hold onto that room so the client can clearly see
-      // why their room has disappeared. We don't persist it though because
-      // it is unclear *when* we can safely remove the room from the DB.
-      // Instead, we assume that if you're loading from the DB, you've
-      // refreshed the page, which means you've seen the kick/ban already.
-      leave: {}
-    };
-    Object.keys(this.inviteRooms).forEach((roomId) => {
-      data.invite[roomId] = this.inviteRooms[roomId];
-    });
-    Object.keys(this.knockRooms).forEach((roomId) => {
-      data.knock[roomId] = this.knockRooms[roomId];
-    });
-    Object.keys(this.joinRooms).forEach((roomId) => {
-      const roomData = this.joinRooms[roomId];
-      const roomJson = {
-        "ephemeral": {
-          events: []
-        },
-        "account_data": {
-          events: []
-        },
-        "state": {
-          events: []
-        },
-        "org.matrix.msc4222.state_after": {
-          events: []
-        },
-        "timeline": {
-          events: [],
-          prev_batch: null
-        },
-        "unread_notifications": roomData._unreadNotifications,
-        "unread_thread_notifications": roomData._unreadThreadNotifications,
-        "summary": roomData._summary,
-        "msc4354_sticky": roomData._stickyEvents?.length ? {
-          events: roomData._stickyEvents.map((e) => e.event)
-        } : void 0
-      };
-      Object.keys(roomData._accountData).forEach((evType) => {
-        roomJson.account_data.events.push(roomData._accountData[evType]);
-      });
-      const receiptEvent = roomData._receipts.buildAccumulatedReceiptEvent(roomId);
-      if (receiptEvent) {
-        roomJson.ephemeral.events.push(receiptEvent);
-      }
-      roomData._timeline.forEach((msgData) => {
-        if (!roomJson.timeline.prev_batch) {
-          if (!msgData.token) {
-            return;
-          }
-          roomJson.timeline.prev_batch = msgData.token;
-        }
-        let transformedEvent;
-        if (!forDatabase && isTaggedEvent(msgData.event)) {
-          transformedEvent = Object.assign({}, msgData.event);
-          if (transformedEvent.unsigned !== void 0) {
-            transformedEvent.unsigned = Object.assign({}, transformedEvent.unsigned);
-          }
-          delete transformedEvent._localTs;
-          transformedEvent.unsigned = transformedEvent.unsigned || {};
-          transformedEvent.unsigned.age = Date.now() - msgData.event._localTs;
-        } else {
-          transformedEvent = msgData.event;
-        }
-        roomJson.timeline.events.push(transformedEvent);
-      });
-      const rollBackState = /* @__PURE__ */ Object.create(null);
-      for (let i = roomJson.timeline.events.length - 1; i >= 0; i--) {
-        const timelineEvent = roomJson.timeline.events[i];
-        if (timelineEvent.state_key === null || timelineEvent.state_key === void 0) {
-          continue;
-        }
-        const prevStateEvent = deepCopy(timelineEvent);
-        if (prevStateEvent.unsigned) {
-          if (prevStateEvent.unsigned.prev_content) {
-            prevStateEvent.content = prevStateEvent.unsigned.prev_content;
-          }
-          if (prevStateEvent.unsigned.prev_sender) {
-            prevStateEvent.sender = prevStateEvent.unsigned.prev_sender;
-          }
-        }
-        setState(rollBackState, prevStateEvent);
-      }
-      Object.keys(roomData._currentState).forEach((evType) => {
-        Object.keys(roomData._currentState[evType]).forEach((stateKey) => {
-          let ev = roomData._currentState[evType][stateKey];
-          roomJson["org.matrix.msc4222.state_after"].events.push(ev);
-          if (rollBackState[evType] && rollBackState[evType][stateKey]) {
-            ev = rollBackState[evType][stateKey];
-          }
-          roomJson.state.events.push(ev);
-        });
-      });
-      data.join[roomId] = roomJson;
-    });
-    const accData = [];
-    Object.keys(this.accountData).forEach((evType) => {
-      accData.push(this.accountData[evType]);
-    });
-    return {
-      nextBatch: this.nextBatch,
-      roomsData: data,
-      accountData: accData
-    };
-  }
-  getNextBatchToken() {
-    return this.nextBatch;
-  }
-  removeEventsFromRoom(roomId, eventIds) {
-    this.joinRooms[roomId]._timeline = this.joinRooms[roomId]._timeline.filter((ev) => !eventIds.includes(ev.event.event_id));
-    this.joinRooms[roomId]._stickyEvents = this.joinRooms[roomId]._stickyEvents.filter((ev) => !eventIds.includes(ev.event.event_id));
-  }
-};
-function setState(eventMap, event) {
-  if (event.state_key === null || event.state_key === void 0 || !event.type) {
-    return;
-  }
-  if (!eventMap[event.type]) {
-    eventMap[event.type] = /* @__PURE__ */ Object.create(null);
-  }
-  eventMap[event.type][event.state_key] = event;
-}
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_errors2();
-init_base64();
-init_beacon();
-init_event2();
-init_room();
-init_event_timeline();
-init_event_timeline_set();
-init_poll();
-init_room_member();
-init_room_state();
-init_thread();
-init_typed_event_emitter();
-init_user();
-init_device();
-init_search_result();
-init_oauth();
-init_scheduler();
-init_filter();
-
-// node_modules/matrix-js-sdk/lib/timeline-window.js
-init_defineProperty();
-init_event_timeline();
-init_logger();
-init_room();
-var DEBUG3 = false;
-var debuglog4 = DEBUG3 ? logger.log.bind(logger) : function() {
-};
-var DEFAULT_PAGINATE_LOOP_LIMIT = 10;
-var TimelineWindow = class {
-  /**
-   * Construct a TimelineWindow.
-   *
-   * <p>This abstracts the separate timelines in a Matrix {@link Room} into a single iterable thing.
-   * It keeps track of the start and endpoints of the window, which can be advanced with the help
-   * of pagination requests.
-   *
-   * <p>Before the window is useful, it must be initialised by calling {@link TimelineWindow#load}.
-   *
-   * <p>Note that the window will not automatically extend itself when new events
-   * are received from /sync; you should arrange to call {@link TimelineWindow#paginate}
-   * on {@link RoomEvent.Timeline} events.
-   *
-   * <p>Note that constructing an instance of this class for a room adds a
-   * listener for RoomEvent.Timeline events which is never removed. In theory
-   * this should not cause a leak since the EventEmitter uses weak mappings.
-   *
-   * @param client -   MatrixClient to be used for context/pagination
-   *   requests.
-   *
-   * @param timelineSet -  The timelineSet to track
-   *
-   * @param opts - Configuration options for this window
-   */
-  constructor(client, timelineSet, opts = {}) {
-    _defineProperty(this, "windowLimit", void 0);
-    _defineProperty(this, "start", void 0);
-    _defineProperty(this, "end", void 0);
-    _defineProperty(this, "eventCount", 0);
-    this.client = client;
-    this.timelineSet = timelineSet;
-    this.windowLimit = opts.windowLimit || 1e3;
-    timelineSet.room?.on(RoomEvent.Timeline, this.onTimelineEvent.bind(this));
-  }
-  /**
-   * Initialise the window to point at a given event, or the live timeline
-   *
-   * @param initialEventId -   If given, the window will contain the
-   *    given event
-   * @param initialWindowSize -   Size of the initial window
-   */
-  load(initialEventId, initialWindowSize = 20) {
-    const initFields = (timeline) => {
-      if (!timeline) {
-        throw new Error("No timeline given to initFields");
-      }
-      let eventIndex;
-      const events = timeline.getEvents();
-      if (!initialEventId) {
-        eventIndex = events.length;
-      } else {
-        eventIndex = events.findIndex((e) => e.getId() === initialEventId);
-        if (eventIndex < 0) {
-          throw new Error("getEventTimeline result didn't include requested event");
-        }
-      }
-      const endIndex = Math.min(events.length, eventIndex + Math.ceil(initialWindowSize / 2));
-      const startIndex = Math.max(0, endIndex - initialWindowSize);
-      this.start = new TimelineIndex(timeline, startIndex - timeline.getBaseIndex());
-      this.end = new TimelineIndex(timeline, endIndex - timeline.getBaseIndex());
-      this.eventCount = endIndex - startIndex;
-    };
-    if (this.timelineSet.getTimelineForEvent(initialEventId)) {
-      initFields(this.timelineSet.getTimelineForEvent(initialEventId));
-      return Promise.resolve();
-    } else if (initialEventId) {
-      return this.client.getEventTimeline(this.timelineSet, initialEventId).then(initFields);
-    } else {
-      initFields(this.timelineSet.getLiveTimeline());
-      return Promise.resolve();
-    }
-  }
-  /**
-   * Get the TimelineIndex of the window in the given direction.
-   *
-   * @param direction -   EventTimeline.BACKWARDS to get the TimelineIndex
-   * at the start of the window; EventTimeline.FORWARDS to get the TimelineIndex at
-   * the end.
-   *
-   * @returns The requested timeline index if one exists, null
-   * otherwise.
-   */
-  getTimelineIndex(direction) {
-    if (direction == EventTimeline.BACKWARDS) {
-      return this.start ?? null;
-    } else if (direction == EventTimeline.FORWARDS) {
-      return this.end ?? null;
-    } else {
-      throw new Error("Invalid direction '" + direction + "'");
-    }
-  }
-  /**
-   * Try to extend the window using events that are already in the underlying
-   * TimelineIndex.
-   *
-   * @param direction -   EventTimeline.BACKWARDS to try extending it
-   *   backwards; EventTimeline.FORWARDS to try extending it forwards.
-   * @param size -   number of events to try to extend by.
-   *
-   * @returns true if the window was extended, false otherwise.
-   */
-  extend(direction, size) {
-    const tl = this.getTimelineIndex(direction);
-    if (!tl) {
-      debuglog4("TimelineWindow: no timeline yet");
-      return false;
-    }
-    const count2 = direction == EventTimeline.BACKWARDS ? tl.retreat(size) : tl.advance(size);
-    if (count2) {
-      this.eventCount += count2;
-      debuglog4("TimelineWindow: increased cap by " + count2 + " (now " + this.eventCount + ")");
-      const excess = this.eventCount - this.windowLimit;
-      if (excess > 0) {
-        this.unpaginate(excess, direction != EventTimeline.BACKWARDS);
-      }
-      return true;
-    }
-    return false;
-  }
-  onTimelineEvent(_event, _room, _atStart, removed) {
-    if (removed) {
-      this.onEventRemoved();
-    }
-  }
-  /**
-   * If an event was removed, meaning this window is longer than the timeline,
-   * shorten the window.
-   */
-  onEventRemoved() {
-    const events = this.getEvents();
-    if (events.length > 0 && events[events.length - 1] === void 0 && this.end) {
-      this.end.index--;
-    }
-  }
-  /**
-   * Check if this window can be extended
-   *
-   * <p>This returns true if we either have more events, or if we have a
-   * pagination token which means we can paginate in that direction. It does not
-   * necessarily mean that there are more events available in that direction at
-   * this time.
-   *
-   * @param direction -   EventTimeline.BACKWARDS to check if we can
-   *   paginate backwards; EventTimeline.FORWARDS to check if we can go forwards
-   *
-   * @returns true if we can paginate in the given direction
-   */
-  canPaginate(direction) {
-    const tl = this.getTimelineIndex(direction);
-    if (!tl) {
-      debuglog4("TimelineWindow: no timeline yet");
-      return false;
-    }
-    if (direction == EventTimeline.BACKWARDS) {
-      if (tl.index > tl.minIndex()) {
-        return true;
-      }
-    } else {
-      if (tl.index < tl.maxIndex()) {
-        return true;
-      }
-    }
-    const hasNeighbouringTimeline = tl.timeline.getNeighbouringTimeline(direction);
-    const paginationToken = tl.timeline.getPaginationToken(direction);
-    return Boolean(hasNeighbouringTimeline) || Boolean(paginationToken);
-  }
-  /**
-   * Attempt to extend the window
-   *
-   * @param direction -   EventTimeline.BACKWARDS to extend the window
-   *    backwards (towards older events); EventTimeline.FORWARDS to go forwards.
-   *
-   * @param size -   number of events to try to extend by. If fewer than this
-   *    number are immediately available, then we return immediately rather than
-   *    making an API call.
-   *
-   * @param makeRequest - whether we should make API calls to
-   *    fetch further events if we don't have any at all. (This has no effect if
-   *    the room already knows about additional events in the relevant direction,
-   *    even if there are fewer than 'size' of them, as we will just return those
-   *    we already know about.)
-   *
-   * @param requestLimit - limit for the number of API requests we
-   *    should make.
-   *
-   * @returns Promise which resolves to a boolean which is true if more events
-   *    were successfully retrieved.
-   */
-  async paginate(direction, size, makeRequest = true, requestLimit = DEFAULT_PAGINATE_LOOP_LIMIT) {
-    const tl = this.getTimelineIndex(direction);
-    if (!tl) {
-      debuglog4("TimelineWindow: no timeline yet");
-      return false;
-    }
-    if (tl.pendingPaginate) {
-      return tl.pendingPaginate;
-    }
-    if (this.extend(direction, size)) {
-      return true;
-    }
-    if (!makeRequest || requestLimit === 0) {
-      return false;
-    }
-    const token = tl.timeline.getPaginationToken(direction);
-    if (!token) {
-      debuglog4("TimelineWindow: no token");
-      return false;
-    }
-    debuglog4("TimelineWindow: starting request");
-    const prom = this.client.paginateEventTimeline(tl.timeline, {
-      backwards: direction == EventTimeline.BACKWARDS,
-      limit: size
-    }).finally(function() {
-      tl.pendingPaginate = void 0;
-    }).then((r) => {
-      debuglog4("TimelineWindow: request completed with result " + r);
-      if (!r) {
-        return this.paginate(direction, size, false, 0);
-      }
-      return this.paginate(direction, size, true, requestLimit - 1);
-    });
-    tl.pendingPaginate = prom;
-    return prom;
-  }
-  /**
-   * Remove `delta` events from the start or end of the timeline.
-   *
-   * @param delta - number of events to remove from the timeline
-   * @param startOfTimeline - if events should be removed from the start
-   *     of the timeline.
-   */
-  unpaginate(delta, startOfTimeline) {
-    const tl = startOfTimeline ? this.start : this.end;
-    if (!tl) {
-      throw new Error(`Attempting to unpaginate startOfTimeline=${startOfTimeline} but don't have this direction`);
-    }
-    if (delta > this.eventCount || delta < 0) {
-      throw new Error(`Attemting to unpaginate ${delta} events, but only have ${this.eventCount} in the timeline`);
-    }
-    while (delta > 0) {
-      const count2 = startOfTimeline ? tl.advance(delta) : tl.retreat(delta);
-      if (count2 <= 0) {
-        throw new Error("Unable to unpaginate any further, but still have " + this.eventCount + " events");
-      }
-      delta -= count2;
-      this.eventCount -= count2;
-      debuglog4("TimelineWindow.unpaginate: dropped " + count2 + " (now " + this.eventCount + ")");
-    }
-  }
-  /**
-   * Get a list of the events currently in the window
-   *
-   * @returns the events in the window
-   */
-  getEvents() {
-    if (!this.start) {
-      return [];
-    }
-    const result = [];
-    let timeline = this.start.timeline;
-    while (timeline) {
-      const events = timeline.getEvents();
-      let startIndex = 0;
-      let endIndex = events.length;
-      if (timeline === this.start.timeline) {
-        startIndex = this.start.index + timeline.getBaseIndex();
-      }
-      if (timeline === this.end?.timeline) {
-        endIndex = this.end.index + timeline.getBaseIndex();
-      }
-      for (let i = startIndex; i < endIndex; i++) {
-        result.push(events[i]);
-      }
-      if (timeline === this.end?.timeline) {
-        break;
-      } else {
-        timeline = timeline.getNeighbouringTimeline(EventTimeline.FORWARDS);
-      }
-    }
-    return result;
-  }
-};
-var TimelineIndex = class {
-  // index: the indexes are relative to BaseIndex, so could well be negative.
-  constructor(timeline, index) {
-    _defineProperty(this, "pendingPaginate", void 0);
-    this.timeline = timeline;
-    this.index = index;
-  }
-  /**
-   * @returns the minimum possible value for the index in the current
-   *    timeline
-   */
-  minIndex() {
-    return this.timeline.getBaseIndex() * -1;
-  }
-  /**
-   * @returns the maximum possible value for the index in the current
-   *    timeline (exclusive - ie, it actually returns one more than the index
-   *    of the last element).
-   */
-  maxIndex() {
-    return this.timeline.getEvents().length - this.timeline.getBaseIndex();
-  }
-  /**
-   * Try move the index forward, or into the neighbouring timeline
-   *
-   * @param delta -  number of events to advance by
-   * @returns number of events successfully advanced by
-   */
-  advance(delta) {
-    if (!delta) {
-      return 0;
-    }
-    let cappedDelta;
-    if (delta < 0) {
-      cappedDelta = Math.max(delta, this.minIndex() - this.index);
-      if (cappedDelta < 0) {
-        this.index += cappedDelta;
-        return cappedDelta;
-      }
-    } else {
-      cappedDelta = Math.min(delta, this.maxIndex() - this.index);
-      if (cappedDelta > 0) {
-        this.index += cappedDelta;
-        return cappedDelta;
-      }
-    }
-    const neighbour = this.timeline.getNeighbouringTimeline(delta < 0 ? EventTimeline.BACKWARDS : EventTimeline.FORWARDS);
-    if (neighbour) {
-      this.timeline = neighbour;
-      if (delta < 0) {
-        this.index = this.maxIndex();
-      } else {
-        this.index = this.minIndex();
-      }
-      debuglog4("paginate: switched to new neighbour");
-      return this.advance(delta);
-    }
-    return 0;
-  }
-  /**
-   * Try move the index backwards, or into the neighbouring timeline
-   *
-   * @param delta -  number of events to retreat by
-   * @returns number of events successfully retreated by
-   */
-  retreat(delta) {
-    return this.advance(delta * -1) * -1;
-  }
-};
-
-// node_modules/matrix-js-sdk/lib/interactive-auth.js
-init_defineProperty();
-init_logger();
-init_http_api();
-var EMAIL_STAGE_TYPE = "m.login.email.identity";
-var MSISDN_STAGE_TYPE = "m.login.msisdn";
-var AuthType = /* @__PURE__ */ (function(AuthType2) {
-  AuthType2["Password"] = "m.login.password";
-  AuthType2["Recaptcha"] = "m.login.recaptcha";
-  AuthType2["Terms"] = "m.login.terms";
-  AuthType2["Email"] = "m.login.email.identity";
-  AuthType2["Msisdn"] = "m.login.msisdn";
-  AuthType2["Sso"] = "m.login.sso";
-  AuthType2["SsoUnstable"] = "org.matrix.login.sso";
-  AuthType2["Dummy"] = "m.login.dummy";
-  AuthType2["RegistrationToken"] = "m.login.registration_token";
-  AuthType2["UnstableRegistrationToken"] = "org.matrix.msc3231.login.registration_token";
-  AuthType2["OAuth"] = "m.oauth";
-  return AuthType2;
-})({});
-var NoAuthFlowFoundError = class extends Error {
-  constructor(m, required_stages, flows) {
-    super(m);
-    _defineProperty(this, "name", "NoAuthFlowFoundError");
-    this.required_stages = required_stages;
-    this.flows = flows;
-  }
-};
-var InteractiveAuth = class {
-  constructor(opts) {
-    _defineProperty(this, "matrixClient", void 0);
-    _defineProperty(this, "inputs", void 0);
-    _defineProperty(this, "clientSecret", void 0);
-    _defineProperty(this, "requestCallback", void 0);
-    _defineProperty(this, "busyChangedCallback", void 0);
-    _defineProperty(this, "stateUpdatedCallback", void 0);
-    _defineProperty(this, "requestEmailTokenCallback", void 0);
-    _defineProperty(this, "supportedStages", void 0);
-    _defineProperty(this, "data", void 0);
-    _defineProperty(this, "emailSid", void 0);
-    _defineProperty(this, "requestingEmailToken", false);
-    _defineProperty(this, "attemptAuthDeferred", null);
-    _defineProperty(this, "chosenFlow", null);
-    _defineProperty(this, "currentStage", null);
-    _defineProperty(this, "emailAttempt", 1);
-    _defineProperty(this, "submitPromise", null);
-    _defineProperty(this, "requestEmailToken", async () => {
-      if (!this.requestingEmailToken) {
-        logger.trace("Requesting email token. Attempt: " + this.emailAttempt);
-        this.requestingEmailToken = true;
-        try {
-          const requestTokenResult = await this.requestEmailTokenCallback(this.inputs.emailAddress, this.clientSecret, this.emailAttempt++, this.data.session);
-          this.emailSid = requestTokenResult.sid;
-          logger.trace("Email token request succeeded");
-        } finally {
-          this.requestingEmailToken = false;
-        }
-      } else {
-        logger.warn("Could not request email token: Already requesting");
-      }
-    });
-    this.matrixClient = opts.matrixClient;
-    this.data = opts.authData || {
-      flows: []
-    };
-    this.requestCallback = opts.doRequest;
-    this.busyChangedCallback = opts.busyChanged;
-    this.stateUpdatedCallback = opts.stateUpdated || opts.startAuthStage;
-    this.requestEmailTokenCallback = opts.requestEmailToken;
-    this.inputs = opts.inputs || {};
-    if (opts.sessionId) this.data.session = opts.sessionId;
-    this.clientSecret = opts.clientSecret || this.matrixClient.generateClientSecret();
-    this.emailSid = opts.emailSid;
-    if (opts.supportedStages !== void 0) this.supportedStages = new Set(opts.supportedStages);
-  }
-  /**
-   * begin the authentication process.
-   *
-   * @returns which resolves to the response on success,
-   * or rejects with the error on failure. Rejects with NoAuthFlowFoundError if
-   *     no suitable authentication flow can be found
-   */
-  async attemptAuth() {
-    this.attemptAuthDeferred = Promise.withResolvers();
-    const promise = this.attemptAuthDeferred.promise;
-    if (!this.data?.flows?.length) {
-      this.busyChangedCallback?.(true);
-      const auth = this.data.session ? {
-        session: this.data.session
-      } : null;
-      this.doRequest(auth).finally(() => {
-        this.busyChangedCallback?.(false);
-      });
-    } else {
-      this.startNextAuthStage();
-    }
-    return promise;
-  }
-  /**
-   * Poll to check if the auth session or current stage has been
-   * completed out-of-band. If so, the attemptAuth promise will
-   * be resolved.
-   */
-  async poll() {
-    if (!this.data.session) return;
-    if (!this.attemptAuthDeferred) return;
-    if (this.submitPromise) return;
-    let authDict = {};
-    if (this.currentStage == EMAIL_STAGE_TYPE) {
-      if (this.emailSid) {
-        const creds = {
-          sid: this.emailSid,
-          client_secret: this.clientSecret
-        };
-        const isUrl = this.matrixClient.getIdentityServerUrl();
-        if (isUrl) {
-          creds.id_server = new URL(isUrl).host;
-        }
-        authDict = {
-          type: EMAIL_STAGE_TYPE,
-          threepid_creds: creds
-        };
-      }
-    }
-    this.submitAuthDict(authDict, true);
-  }
-  /**
-   * get the auth session ID
-   *
-   * @returns session id
-   */
-  getSessionId() {
-    return this.data?.session;
-  }
-  /**
-   * get the client secret used for validation sessions
-   * with the identity server.
-   *
-   * @returns client secret
-   */
-  getClientSecret() {
-    return this.clientSecret;
-  }
-  /**
-   * get the server params for a given stage
-   *
-   * @param loginType - login type for the stage
-   * @returns any parameters from the server for this stage
-   */
-  getStageParams(loginType) {
-    return this.data?.params?.[loginType];
-  }
-  getChosenFlow() {
-    return this.chosenFlow;
-  }
-  /**
-   * submit a new auth dict and fire off the request. This will either
-   * make attemptAuth resolve/reject, or cause the startAuthStage callback
-   * to be called for a new stage.
-   *
-   * @param authData - new auth dict to send to the server. Should
-   *    include a `type` property denoting the login type, as well as any
-   *    other params for that stage.
-   * @param background - If true, this request failing will not result
-   *    in the attemptAuth promise being rejected. This can be set to true
-   *    for requests that just poll to see if auth has been completed elsewhere.
-   */
-  async submitAuthDict(authData, background = false) {
-    if (!this.attemptAuthDeferred) {
-      throw new Error("submitAuthDict() called before attemptAuth()");
-    }
-    if (!background) {
-      this.busyChangedCallback?.(true);
-    }
-    while (this.submitPromise) {
-      try {
-        await this.submitPromise;
-      } catch {
-      }
-    }
-    let auth;
-    if (this.data?.session) {
-      auth = Object.assign({
-        session: this.data.session
-      }, authData);
-    } else {
-      auth = authData;
-    }
-    try {
-      this.submitPromise = this.doRequest(auth, background);
-      await this.submitPromise;
-    } finally {
-      this.submitPromise = null;
-      if (!background) {
-        this.busyChangedCallback?.(false);
-      }
-    }
-  }
-  /**
-   * Gets the sid for the email validation session
-   * Specific to m.login.email.identity
-   *
-   * @returns The sid of the email auth session
-   */
-  getEmailSid() {
-    return this.emailSid;
-  }
-  /**
-   * Sets the sid for the email validation session
-   * This must be set in order to successfully poll for completion
-   * of the email validation.
-   * Specific to m.login.email.identity
-   *
-   * @param sid - The sid for the email validation session
-   */
-  setEmailSid(sid) {
-    this.emailSid = sid;
-  }
-  /**
-   * Fire off a request, and either resolve the promise, or call
-   * startAuthStage.
-   *
-   * @internal
-   * @param auth - new auth dict, including session id
-   * @param background - If true, this request is a background poll, so it
-   *    failing will not result in the attemptAuth promise being rejected.
-   *    This can be set to true for requests that just poll to see if auth has
-   *    been completed elsewhere.
-   */
-  async doRequest(auth, background = false) {
-    try {
-      const result = await this.requestCallback(auth, background);
-      this.attemptAuthDeferred.resolve(result);
-      this.attemptAuthDeferred = null;
-    } catch (error) {
-      const matrixError = error instanceof MatrixError ? error : null;
-      const errorFlows = matrixError?.data?.flows ?? null;
-      const haveFlows = this.data?.flows || Boolean(errorFlows);
-      if (!matrixError || matrixError.httpStatus !== 401 || !matrixError.data || !haveFlows) {
-        if (!background) {
-          this.attemptAuthDeferred?.reject(error);
-        } else {
-          logger.log("Background poll request failed doing UI auth: ignoring", error);
-        }
-      }
-      if (matrixError && !matrixError.data) {
-        matrixError.data = {};
-      }
-      if (matrixError && !matrixError.data.flows && !matrixError.data.completed && !matrixError.data.session) {
-        matrixError.data.flows = this.data.flows;
-        matrixError.data.completed = this.data.completed;
-        matrixError.data.session = this.data.session;
-      }
-      if (matrixError) {
-        this.data = matrixError.data;
-      }
-      try {
-        this.startNextAuthStage();
-      } catch (e) {
-        this.attemptAuthDeferred.reject(e);
-        this.attemptAuthDeferred = null;
-        return;
-      }
-      if (!this.emailSid && this.chosenFlow?.stages.includes(AuthType.Email)) {
-        try {
-          await this.requestEmailToken();
-        } catch (e) {
-          this.attemptAuthDeferred.reject(e);
-          this.attemptAuthDeferred = null;
-        }
-      }
-    }
-  }
-  /**
-   * Pick the next stage and call the callback
-   *
-   * @internal
-   * @throws {@link NoAuthFlowFoundError} If no suitable authentication flow can be found
-   */
-  startNextAuthStage() {
-    const nextStage = this.chooseStage();
-    if (!nextStage) {
-      throw new Error("No incomplete flows from the server");
-    }
-    this.currentStage = nextStage;
-    if (nextStage === AuthType.Dummy) {
-      this.submitAuthDict({
-        type: "m.login.dummy"
-      });
-      return;
-    }
-    if (this.data?.errcode || this.data?.error) {
-      this.stateUpdatedCallback(nextStage, {
-        errcode: this.data?.errcode || "",
-        error: this.data?.error || ""
-      });
-      return;
-    }
-    this.stateUpdatedCallback(nextStage, nextStage === EMAIL_STAGE_TYPE ? {
-      emailSid: this.emailSid
-    } : {});
-  }
-  /**
-   * Pick the next auth stage
-   *
-   * @internal
-   * @returns login type
-   * @throws {@link NoAuthFlowFoundError} If no suitable authentication flow can be found
-   */
-  chooseStage() {
-    if (this.chosenFlow === null) {
-      this.chosenFlow = this.chooseFlow();
-    }
-    logger.log("Active flow => %s", JSON.stringify(this.chosenFlow));
-    const nextStage = this.firstUncompletedStage(this.chosenFlow);
-    logger.log("Next stage: %s", nextStage);
-    return nextStage;
-  }
-  // Returns a low number for flows we consider best. Counts increase for longer flows and even more so
-  // for flows which contain stages not listed in `supportedStages`.
-  scoreFlow(flow) {
-    let score = flow.stages.length;
-    if (this.supportedStages !== void 0) {
-      score += flow.stages.filter((stage) => !this.supportedStages.has(stage)).length * 10;
-    }
-    return score;
-  }
-  /**
-   * Pick one of the flows from the returned list
-   * If a flow using all of the inputs is found, it will
-   * be returned, otherwise, null will be returned.
-   *
-   * Only flows using all given inputs are chosen because it
-   * is likely to be surprising if the user provides a
-   * credential and it is not used. For example, for registration,
-   * this could result in the email not being used which would leave
-   * the account with no means to reset a password.
-   *
-   * @internal
-   * @returns flow
-   * @throws {@link NoAuthFlowFoundError} If no suitable authentication flow can be found
-   */
-  chooseFlow() {
-    const flows = this.data?.flows || [];
-    const haveEmail = Boolean(this.inputs.emailAddress) || Boolean(this.emailSid);
-    const haveMsisdn = Boolean(this.inputs.phoneCountry) && Boolean(this.inputs.phoneNumber);
-    flows.sort((a, b) => this.scoreFlow(a) - this.scoreFlow(b));
-    for (const flow of flows) {
-      let flowHasEmail = false;
-      let flowHasMsisdn = false;
-      for (const stage of flow.stages) {
-        if (stage === EMAIL_STAGE_TYPE) {
-          flowHasEmail = true;
-        } else if (stage == MSISDN_STAGE_TYPE) {
-          flowHasMsisdn = true;
-        }
-      }
-      if (flowHasEmail == haveEmail && flowHasMsisdn == haveMsisdn) {
-        return flow;
-      }
-    }
-    const requiredStages = [];
-    if (haveEmail) requiredStages.push(EMAIL_STAGE_TYPE);
-    if (haveMsisdn) requiredStages.push(MSISDN_STAGE_TYPE);
-    throw new NoAuthFlowFoundError("No appropriate authentication flow found", requiredStages, flows);
-  }
-  /**
-   * Get the first uncompleted stage in the given flow
-   *
-   * @internal
-   * @returns login type
-   */
-  firstUncompletedStage(flow) {
-    const completed = this.data?.completed || [];
-    return flow.stages.find((stageType) => !completed.includes(stageType));
-  }
-};
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_version_support();
-init_service_types();
-
-// node_modules/matrix-js-sdk/lib/store/indexeddb.js
-init_defineProperty();
-
-// node_modules/matrix-js-sdk/lib/store/indexeddb-local-backend.js
-init_defineProperty();
-init_utils();
-init_indexeddb_helpers();
-init_logger();
-var DB_MIGRATIONS2 = [
-  (db) => {
-    db.createObjectStore("users", {
-      keyPath: ["userId"]
-    });
-    db.createObjectStore("accountData", {
-      keyPath: ["type"]
-    });
-    db.createObjectStore("sync", {
-      keyPath: ["clobber"]
-    });
-  },
-  (db) => {
-    const oobMembersStore = db.createObjectStore("oob_membership_events", {
-      keyPath: ["room_id", "state_key"]
-    });
-    oobMembersStore.createIndex("room", "room_id");
-  },
-  (db) => {
-    db.createObjectStore("client_options", {
-      keyPath: ["clobber"]
-    });
-  },
-  (db) => {
-    db.createObjectStore("to_device_queue", {
-      autoIncrement: true
-    });
-  },
-  (db) => {
-    db.createObjectStore("user_profile", {
-      keyPath: ["userId"]
-    });
-  }
-  // Expand as needed.
-];
-var VERSION2 = DB_MIGRATIONS2.length;
-function selectQuery(store, keyRange, resultMapper) {
-  const query = store.openCursor(keyRange);
-  return new Promise((resolve, reject) => {
-    const results = [];
-    query.onerror = () => {
-      reject(new Error(`selectQuery failed for ${store.name}`, {
-        cause: query.error
-      }));
-    };
-    query.onsuccess = () => {
-      const cursor = query.result;
-      if (!cursor) {
-        resolve(results);
-        return;
-      }
-      results.push(resultMapper(cursor));
-      cursor.continue();
-    };
-  });
-}
-function txnAsPromise(txn) {
-  return new Promise((resolve, reject) => {
-    txn.oncomplete = function(event) {
-      resolve(event);
-    };
-    txn.onerror = function() {
-      reject(txn.error);
-    };
-  });
-}
-function reqAsEventPromise(req) {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = function(event) {
-      resolve(event);
-    };
-    req.onerror = function() {
-      reject(req.error);
-    };
-  });
-}
-function reqAsPromise(req) {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req);
-    req.onerror = (err) => reject(err);
-  });
-}
-function reqAsCursorPromise(req) {
-  return reqAsEventPromise(req).then((event) => req.result);
-}
-var LocalIndexedDBStoreBackend = class {
-  static exists(indexedDB2, dbName) {
-    dbName = "matrix-js-sdk:" + (dbName || "default");
-    return exists(indexedDB2, dbName);
-  }
-  /**
-   * Does the actual reading from and writing to the indexeddb
-   *
-   * Construct a new Indexed Database store backend. This requires a call to
-   * `connect()` before this store can be used.
-   * @param indexedDB - The Indexed DB interface e.g
-   * `window.indexedDB`
-   * @param dbName - Optional database name. The same name must be used
-   * to open the same database.
-   */
-  constructor(indexedDB2, dbName = "default") {
-    _defineProperty(this, "dbName", void 0);
-    _defineProperty(this, "syncAccumulator", void 0);
-    _defineProperty(this, "db", void 0);
-    _defineProperty(this, "disconnected", true);
-    _defineProperty(this, "_isNewlyCreated", false);
-    _defineProperty(this, "syncToDatabasePromise", void 0);
-    _defineProperty(this, "pendingUserPresenceData", []);
-    this.indexedDB = indexedDB2;
-    this.dbName = "matrix-js-sdk:" + dbName;
-    this.syncAccumulator = new SyncAccumulator();
-  }
-  /**
-   * Attempt to connect to the database. This can fail if the user does not
-   * grant permission.
-   * @returns Promise which resolves if successfully connected.
-   */
-  connect(onClose) {
-    if (!this.disconnected) {
-      logger.log(`LocalIndexedDBStoreBackend.connect: already connected or connecting`);
-      return Promise.resolve();
-    }
-    this.disconnected = false;
-    logger.log(`LocalIndexedDBStoreBackend.connect: connecting...`);
-    const req = this.indexedDB.open(this.dbName, VERSION2);
-    req.onupgradeneeded = (ev) => {
-      const db = req.result;
-      const oldVersion = ev.oldVersion;
-      logger.log(`LocalIndexedDBStoreBackend.connect: upgrading from ${oldVersion}`);
-      if (oldVersion < 1) {
-        this._isNewlyCreated = true;
-      }
-      DB_MIGRATIONS2.forEach((migration, index) => {
-        if (oldVersion <= index) migration(db);
-      });
-    };
-    req.onblocked = () => {
-      logger.log(`can't yet open LocalIndexedDBStoreBackend because it is open elsewhere`);
-    };
-    logger.log(`LocalIndexedDBStoreBackend.connect: awaiting connection...`);
-    return reqAsEventPromise(req).then(async () => {
-      logger.log(`LocalIndexedDBStoreBackend.connect: connected`);
-      this.db = req.result;
-      this.db.onversionchange = () => {
-        this.db?.close();
-        this.disconnected = true;
-        this.db = void 0;
-      };
-      this.db.onclose = () => {
-        this.disconnected = true;
-        this.db = void 0;
-        onClose?.();
-      };
-      await this.init();
-    });
-  }
-  /** @returns whether or not the database was newly created in this session. */
-  isNewlyCreated() {
-    return Promise.resolve(this._isNewlyCreated);
-  }
-  /**
-   * Having connected, load initial data from the database and prepare for use
-   * @returns Promise which resolves on success
-   */
-  init() {
-    return Promise.all([this.loadAccountData(), this.loadSyncData()]).then(([accountData, syncData]) => {
-      logger.log(`LocalIndexedDBStoreBackend: loaded initial data`);
-      this.syncAccumulator.accumulate({
-        next_batch: syncData.nextBatch,
-        rooms: syncData.roomsData,
-        account_data: {
-          events: accountData
-        }
-      }, true);
-    });
-  }
-  /**
-   * Returns the out-of-band membership events for this room that
-   * were previously loaded.
-   * @returns the events, potentially an empty array if OOB loading didn't yield any new members
-   * @returns in case the members for this room haven't been stored yet
-   */
-  getOutOfBandMembers(roomId) {
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction(["oob_membership_events"], "readonly");
-      const store = tx.objectStore("oob_membership_events");
-      const roomIndex = store.index("room");
-      const range = IDBKeyRange.only(roomId);
-      const request = roomIndex.openCursor(range);
-      const membershipEvents = [];
-      let oobWritten = false;
-      request.onsuccess = () => {
-        const cursor = request.result;
-        if (!cursor) {
-          if (!membershipEvents.length && !oobWritten) {
-            return resolve(null);
-          }
-          return resolve(membershipEvents);
-        }
-        const record = cursor.value;
-        if (record.oob_written) {
-          oobWritten = true;
-        } else {
-          membershipEvents.push(record);
-        }
-        cursor.continue();
-      };
-      request.onerror = (err) => {
-        reject(err);
-      };
-    }).then((events) => {
-      logger.log(`LL: got ${events?.length} membershipEvents from storage for room ${roomId} ...`);
-      return events;
-    });
-  }
-  /**
-   * Stores the out-of-band membership events for this room. Note that
-   * it still makes sense to store an empty array as the OOB status for the room is
-   * marked as fetched, and getOutOfBandMembers will return an empty array instead of null
-   * @param membershipEvents - the membership events to store
-   */
-  async setOutOfBandMembers(roomId, membershipEvents) {
-    logger.log(`LL: backend about to store ${membershipEvents.length} members for ${roomId}`);
-    const tx = this.db.transaction(["oob_membership_events"], "readwrite");
-    const store = tx.objectStore("oob_membership_events");
-    membershipEvents.forEach((e) => {
-      store.put(e);
-    });
-    const markerObject = {
-      room_id: roomId,
-      oob_written: true,
-      state_key: 0
-    };
-    store.put(markerObject);
-    await txnAsPromise(tx);
-    logger.log(`LL: backend done storing for ${roomId}!`);
-  }
-  async clearOutOfBandMembers(roomId) {
-    const readTx = this.db.transaction(["oob_membership_events"], "readonly");
-    const store = readTx.objectStore("oob_membership_events");
-    const roomIndex = store.index("room");
-    const roomRange = IDBKeyRange.only(roomId);
-    const minStateKeyProm = reqAsCursorPromise(roomIndex.openKeyCursor(roomRange, "next")).then((cursor) => cursor?.primaryKey?.[1]);
-    const maxStateKeyProm = reqAsCursorPromise(roomIndex.openKeyCursor(roomRange, "prev")).then((cursor) => cursor?.primaryKey?.[1]);
-    const [minStateKey, maxStateKey] = await Promise.all([minStateKeyProm, maxStateKeyProm]);
-    const writeTx = this.db.transaction(["oob_membership_events"], "readwrite");
-    const writeStore = writeTx.objectStore("oob_membership_events");
-    const membersKeyRange = IDBKeyRange.bound([roomId, minStateKey], [roomId, maxStateKey]);
-    logger.log(`LL: Deleting all users + marker in storage for room ${roomId}, with key range:`, [roomId, minStateKey], [roomId, maxStateKey]);
-    await reqAsPromise(writeStore.delete(membersKeyRange));
-  }
-  /**
-   * Clear the entire database. This should be used when logging out of a client
-   * to prevent mixing data between accounts. Closes the database.
-   * @returns Resolved when the database is cleared.
-   */
-  clearDatabase() {
-    return new Promise((resolve) => {
-      logger.log(`Removing indexeddb instance: ${this.dbName}`);
-      this.db?.close();
-      const req = this.indexedDB.deleteDatabase(this.dbName);
-      req.onblocked = () => {
-        logger.log(`can't yet delete indexeddb ${this.dbName} because it is open elsewhere`);
-      };
-      req.onerror = () => {
-        logger.warn(`unable to delete js-sdk store indexeddb: ${req.error?.name}`);
-        resolve();
-      };
-      req.onsuccess = () => {
-        logger.log(`Removed indexeddb instance: ${this.dbName}`);
-        resolve();
-      };
-    });
-  }
-  /**
-   * @param copy - If false, the data returned is from internal
-   * buffers and must not be mutated. Otherwise, a copy is made before
-   * returning such that the data can be safely mutated. Default: true.
-   *
-   * @returns Promise which resolves with a sync response to restore the
-   * client state to where it was at the last save, or null if there
-   * is no saved sync data.
-   */
-  getSavedSync(copy = true) {
-    const data = this.syncAccumulator.getJSON();
-    if (!data.nextBatch) return Promise.resolve(null);
-    if (copy) {
-      return Promise.resolve(deepCopy(data));
-    } else {
-      return Promise.resolve(data);
-    }
-  }
-  getNextBatchToken() {
-    return Promise.resolve(this.syncAccumulator.getNextBatchToken());
-  }
-  setSyncData(syncData) {
-    return Promise.resolve().then(() => {
-      this.syncAccumulator.accumulate(syncData);
-    });
-  }
-  /**
-   * Sync users and all accumulated sync data to the database.
-   * If a previous sync is in flight, the new data will be added to the
-   * next sync and the current sync's promise will be returned.
-   * @param userTuples - The user tuples
-   * @returns Promise which resolves if the data was persisted.
-   */
-  async syncToDatabase(userTuples) {
-    if (this.syncToDatabasePromise) {
-      logger.warn("Skipping syncToDatabase() as persist already in flight");
-      this.pendingUserPresenceData.push(...userTuples);
-      return this.syncToDatabasePromise;
-    }
-    userTuples.unshift(...this.pendingUserPresenceData);
-    this.syncToDatabasePromise = this.doSyncToDatabase(userTuples);
-    return this.syncToDatabasePromise;
-  }
-  async doSyncToDatabase(userTuples) {
-    try {
-      const syncData = this.syncAccumulator.getJSON(true);
-      await Promise.all([this.persistUserPresenceEvents(userTuples), this.persistAccountData(syncData.accountData), this.persistSyncData(syncData.nextBatch, syncData.roomsData)]);
-    } finally {
-      this.syncToDatabasePromise = void 0;
-    }
-  }
-  /**
-   * Persist rooms /sync data along with the next batch token.
-   * @param nextBatch - The next_batch /sync value.
-   * @param roomsData - The 'rooms' /sync data from a SyncAccumulator
-   * @returns Promise which resolves if the data was persisted.
-   */
-  persistSyncData(nextBatch, roomsData) {
-    logger.log("Persisting sync data up to", nextBatch);
-    return promiseTry(() => {
-      const txn = this.db.transaction(["sync"], "readwrite");
-      const store = txn.objectStore("sync");
-      store.put({
-        clobber: "-",
-        // constant key so will always clobber
-        nextBatch,
-        roomsData
-      });
-      return txnAsPromise(txn).then(() => {
-        logger.log("Persisted sync data up to", nextBatch);
-      });
-    });
-  }
-  /**
-   * Persist a list of account data events. Events with the same 'type' will
-   * be replaced.
-   * @param accountData - An array of raw user-scoped account data events
-   * @returns Promise which resolves if the events were persisted.
-   */
-  persistAccountData(accountData) {
-    return promiseTry(() => {
-      const txn = this.db.transaction(["accountData"], "readwrite");
-      const store = txn.objectStore("accountData");
-      for (const event of accountData) {
-        store.put(event);
-      }
-      return txnAsPromise(txn).then();
-    });
-  }
-  /**
-   * Persist a list of [user id, presence event] they are for.
-   * Users with the same 'userId' will be replaced.
-   * Presence events should be the event in its raw form (not the Event
-   * object)
-   * @param tuples - An array of [userid, event] tuples
-   * @returns Promise which resolves if the users were persisted.
-   */
-  persistUserPresenceEvents(tuples) {
-    return promiseTry(() => {
-      const txn = this.db.transaction(["users"], "readwrite");
-      const store = txn.objectStore("users");
-      for (const tuple of tuples) {
-        store.put({
-          userId: tuple[0],
-          event: tuple[1]
-        });
-      }
-      return txnAsPromise(txn).then();
-    });
-  }
-  /**
-   * Load all user presence events from the database. This is not cached.
-   * FIXME: It would probably be more sensible to store the events in the
-   * sync.
-   * @returns A list of presence events in their raw form.
-   */
-  getUserPresenceEvents() {
-    return promiseTry(() => {
-      const txn = this.db.transaction(["users"], "readonly");
-      const store = txn.objectStore("users");
-      return selectQuery(store, void 0, (cursor) => {
-        return [cursor.value.userId, cursor.value.event];
-      });
-    });
-  }
-  /**
-   * Load all the account data events from the database. This is not cached.
-   * @returns A list of raw global account events.
-   */
-  loadAccountData() {
-    logger.log(`LocalIndexedDBStoreBackend: loading account data...`);
-    return promiseTry(() => {
-      const txn = this.db.transaction(["accountData"], "readonly");
-      const store = txn.objectStore("accountData");
-      return selectQuery(store, void 0, (cursor) => {
-        return cursor.value;
-      }).then((result) => {
-        logger.log(`LocalIndexedDBStoreBackend: loaded account data`);
-        return result;
-      });
-    });
-  }
-  /**
-   * Load the sync data from the database.
-   * @returns An object with "roomsData" and "nextBatch" keys.
-   */
-  loadSyncData() {
-    logger.log(`LocalIndexedDBStoreBackend: loading sync data...`);
-    return promiseTry(() => {
-      const txn = this.db.transaction(["sync"], "readonly");
-      const store = txn.objectStore("sync");
-      return selectQuery(store, void 0, (cursor) => {
-        return cursor.value;
-      }).then((results) => {
-        logger.log(`LocalIndexedDBStoreBackend: loaded sync data`);
-        if (results.length > 1) {
-          logger.warn("loadSyncData: More than 1 sync row found.");
-        }
-        return results.length > 0 ? results[0] : {};
-      });
-    });
-  }
-  getClientOptions() {
-    return Promise.resolve().then(() => {
-      const txn = this.db.transaction(["client_options"], "readonly");
-      const store = txn.objectStore("client_options");
-      return selectQuery(store, void 0, (cursor) => {
-        return cursor.value?.options;
-      }).then((results) => results[0]);
-    });
-  }
-  async storeClientOptions(options) {
-    const txn = this.db.transaction(["client_options"], "readwrite");
-    const store = txn.objectStore("client_options");
-    store.put({
-      clobber: "-",
-      // constant key so will always clobber
-      options
-    });
-    await txnAsPromise(txn);
-  }
-  async saveToDeviceBatches(batches) {
-    const txn = this.db.transaction(["to_device_queue"], "readwrite");
-    const store = txn.objectStore("to_device_queue");
-    for (const batch of batches) {
-      store.add(batch);
-    }
-    await txnAsPromise(txn);
-  }
-  async getOldestToDeviceBatch() {
-    const txn = this.db.transaction(["to_device_queue"], "readonly");
-    const store = txn.objectStore("to_device_queue");
-    const cursor = await reqAsCursorPromise(store.openCursor());
-    if (!cursor) return null;
-    const resultBatch = cursor.value;
-    return {
-      id: cursor.key,
-      txnId: resultBatch.txnId,
-      eventType: resultBatch.eventType,
-      batch: resultBatch.batch
-    };
-  }
-  async removeToDeviceBatch(id) {
-    const txn = this.db.transaction(["to_device_queue"], "readwrite");
-    const store = txn.objectStore("to_device_queue");
-    store.delete(id);
-    await txnAsPromise(txn);
-  }
-  async getUserProfile(userId) {
-    return Promise.resolve().then(() => {
-      const txn = this.db.transaction(["user_profile"], "readonly");
-      const store = txn.objectStore("user_profile");
-      return selectQuery(store, [userId], (cursor) => {
-        return cursor.value?.profile;
-      }).then((results) => results[0]);
-    });
-  }
-  async storeUserProfiles(userProfiles) {
-    const txn = this.db.transaction(["user_profile"], "readwrite");
-    const store = txn.objectStore("user_profile");
-    for (const [userId, profile] of userProfiles.entries()) {
-      store.put({
-        profile,
-        userId
-      });
-    }
-    await txnAsPromise(txn);
-  }
-  async removeUserProfiles(userIds) {
-    const txn = this.db.transaction(["user_profile"], "readwrite");
-    const store = txn.objectStore("user_profile");
-    for (const userId of userIds) {
-      store.delete([userId]);
-    }
-    await txnAsPromise(txn);
-  }
-  async removeEventsFromRoom(roomId, eventIds) {
-    try {
-      this.syncAccumulator.removeEventsFromRoom(roomId, eventIds);
-      const syncData = this.syncAccumulator.getJSON(true);
-      await this.persistSyncData(syncData.nextBatch, syncData.roomsData);
-    } finally {
-      this.syncToDatabasePromise = void 0;
-    }
-  }
-  /*
-   * Close the database
-   */
-  async destroy() {
-    this.db?.close();
-  }
-};
-
-// node_modules/matrix-js-sdk/lib/store/indexeddb-remote-backend.js
-init_defineProperty();
-init_logger();
-var RemoteIndexedDBStoreBackend = class {
-  // Callback for when the IndexedDB gets closed unexpectedly
-  /**
-   * An IndexedDB store backend where the actual backend sits in a web
-   * worker.
-   *
-   * Construct a new Indexed Database store backend. This requires a call to
-   * `connect()` before this store can be used.
-   * @param workerFactory - Factory which produces a Worker
-   * @param dbName - Optional database name. The same name must be used
-   * to open the same database.
-   */
-  constructor(workerFactory, dbName) {
-    _defineProperty(this, "worker", void 0);
-    _defineProperty(this, "nextSeq", 0);
-    _defineProperty(this, "inFlight", {});
-    _defineProperty(this, "startPromiseResolvers", void 0);
-    _defineProperty(this, "onWorkerError", (ev) => {
-      logger.error("IndexedDB worker failed to connect", ev);
-      this.startPromiseResolvers?.reject(ev.message ?? new Error("IndexedDB worker failed to connect"));
-    });
-    _defineProperty(this, "onWorkerMessage", (ev) => {
-      const msg = ev.data;
-      if (msg.command == "closed") {
-        this.onClose?.();
-      } else if (msg.command == "cmd_success" || msg.command == "cmd_fail") {
-        if (msg.seq === void 0) {
-          logger.error("Got reply from worker with no seq");
-          return;
-        }
-        const def = this.inFlight[msg.seq];
-        if (def === void 0) {
-          logger.error("Got reply for unknown seq " + msg.seq);
-          return;
-        }
-        delete this.inFlight[msg.seq];
-        if (msg.command == "cmd_success") {
-          def.resolve(msg.result);
-        } else {
-          const error = new Error(msg.error.message);
-          error.name = msg.error.name;
-          def.reject(error);
-        }
-      } else {
-        logger.warn("Unrecognised message from worker: ", msg);
-      }
-    });
-    this.workerFactory = workerFactory;
-    this.dbName = dbName;
-  }
-  /**
-   * Attempt to connect to the database. This can fail if the user does not
-   * grant permission.
-   * @returns Promise which resolves if successfully connected.
-   */
-  connect(onClose) {
-    this.onClose = onClose;
-    return this.ensureStarted().then(() => this.doCmd("connect"));
-  }
-  /**
-   * Clear the entire database. This should be used when logging out of a client
-   * to prevent mixing data between accounts.
-   * @returns Resolved when the database is cleared.
-   */
-  clearDatabase() {
-    return this.ensureStarted().then(() => this.doCmd("clearDatabase"));
-  }
-  /** @returns whether or not the database was newly created in this session. */
-  isNewlyCreated() {
-    return this.doCmd("isNewlyCreated");
-  }
-  /**
-   * @returns Promise which resolves with a sync response to restore the
-   * client state to where it was at the last save, or null if there
-   * is no saved sync data.
-   */
-  getSavedSync() {
-    return this.doCmd("getSavedSync");
-  }
-  getNextBatchToken() {
-    return this.doCmd("getNextBatchToken");
-  }
-  setSyncData(syncData) {
-    return this.doCmd("setSyncData", [syncData]);
-  }
-  syncToDatabase(userTuples) {
-    return this.doCmd("syncToDatabase", [userTuples]);
-  }
-  /**
-   * Returns the out-of-band membership events for this room that
-   * were previously loaded.
-   * @returns the events, potentially an empty array if OOB loading didn't yield any new members
-   * @returns in case the members for this room haven't been stored yet
-   */
-  getOutOfBandMembers(roomId) {
-    return this.doCmd("getOutOfBandMembers", [roomId]);
-  }
-  /**
-   * Stores the out-of-band membership events for this room. Note that
-   * it still makes sense to store an empty array as the OOB status for the room is
-   * marked as fetched, and getOutOfBandMembers will return an empty array instead of null
-   * @param membershipEvents - the membership events to store
-   * @returns when all members have been stored
-   */
-  setOutOfBandMembers(roomId, membershipEvents) {
-    return this.doCmd("setOutOfBandMembers", [roomId, membershipEvents]);
-  }
-  clearOutOfBandMembers(roomId) {
-    return this.doCmd("clearOutOfBandMembers", [roomId]);
-  }
-  getClientOptions() {
-    return this.doCmd("getClientOptions");
-  }
-  storeClientOptions(options) {
-    return this.doCmd("storeClientOptions", [options]);
-  }
-  /**
-   * Load all user presence events from the database. This is not cached.
-   * @returns A list of presence events in their raw form.
-   */
-  getUserPresenceEvents() {
-    return this.doCmd("getUserPresenceEvents");
-  }
-  async saveToDeviceBatches(batches) {
-    return this.doCmd("saveToDeviceBatches", [batches]);
-  }
-  async getOldestToDeviceBatch() {
-    return this.doCmd("getOldestToDeviceBatch");
-  }
-  async removeToDeviceBatch(id) {
-    return this.doCmd("removeToDeviceBatch", [id]);
-  }
-  async getUserProfile(userId) {
-    return this.doCmd("getUserProfile", [userId]);
-  }
-  async storeUserProfiles(userProfiles) {
-    await this.doCmd("storeUserProfiles", [userProfiles]);
-  }
-  async removeUserProfiles(userIds) {
-    await this.doCmd("removeUserProfiles", [userIds]);
-  }
-  async removeEventsFromRoom(roomId, eventIds) {
-    await this.doCmd("removeEventsFromRoom", [roomId, eventIds]);
-  }
-  ensureStarted() {
-    if (!this.startPromiseResolvers) {
-      this.startPromiseResolvers = Promise.withResolvers();
-      try {
-        this.worker = this.workerFactory();
-      } catch (e) {
-        logger.error("IndexedDB worker failed to start", e);
-        this.startPromiseResolvers.reject(new Error("IndexedDB worker failed to start"));
-        return this.startPromiseResolvers.promise;
-      }
-      this.worker.onmessage = this.onWorkerMessage;
-      this.worker.onerror = this.onWorkerError;
-      this.doCmd("setupWorker", [this.dbName]).then(() => {
-        logger.log("IndexedDB worker is ready");
-        this.startPromiseResolvers?.resolve();
-      });
-    }
-    return this.startPromiseResolvers.promise;
-  }
-  doCmd(command, args) {
-    return Promise.resolve().then(() => {
-      const seq = this.nextSeq++;
-      const def = Promise.withResolvers();
-      this.inFlight[seq] = def;
-      this.worker?.postMessage({
-        command,
-        seq,
-        args
-      });
-      return def.promise;
-    });
-  }
-  /*
-   * Destroy the web worker
-   */
-  async destroy() {
-    this.worker?.terminate();
-  }
-};
-
-// node_modules/matrix-js-sdk/lib/store/indexeddb.js
-init_event2();
-init_logger();
-init_typed_event_emitter();
-var WRITE_DELAY_MS = 1e3 * 60 * 5;
-var IndexedDBStore = class extends MemoryStore {
-  static exists(indexedDB2, dbName) {
-    return LocalIndexedDBStoreBackend.exists(indexedDB2, dbName);
-  }
-  /**
-   * Construct a new Indexed Database store, which extends MemoryStore.
-   *
-   * This store functions like a MemoryStore except it periodically persists
-   * the contents of the store to an IndexedDB backend.
-   *
-   * All data is still kept in-memory but can be loaded from disk by calling
-   * `startup()`. This can make startup times quicker as a complete
-   * sync from the server is not required. This does not reduce memory usage as all
-   * the data is eagerly fetched when `startup()` is called.
-   * ```
-   * let opts = { indexedDB: window.indexedDB, localStorage: window.localStorage };
-   * let store = new IndexedDBStore(opts);
-   * let client = sdk.createClient({
-   *     store: store,
-   * });
-   * await store.startup(); // load from indexed db, must be called after createClient
-   * client.startClient();
-   * client.on("sync", function(state, prevState, data) {
-   *     if (state === "PREPARED") {
-   *         console.log("Started up, now with go faster stripes!");
-   *     }
-   * });
-   * ```
-   *
-   * @param opts - Options object.
-   */
-  constructor(opts) {
-    super(opts);
-    _defineProperty(this, "_backend", void 0);
-    _defineProperty(this, "startedUp", false);
-    _defineProperty(this, "syncTs", 0);
-    _defineProperty(this, "userModifiedMap", {});
-    _defineProperty(this, "emitter", new TypedEventEmitter());
-    _defineProperty(this, "onClose", () => {
-      this.emitter.emit("closed");
-    });
-    _defineProperty(this, "getSavedSync", this.degradable(() => {
-      return this.backend.getSavedSync();
-    }, "getSavedSync"));
-    _defineProperty(this, "isNewlyCreated", this.degradable(() => {
-      return this.backend.isNewlyCreated();
-    }, "isNewlyCreated"));
-    _defineProperty(this, "getSavedSyncToken", this.degradable(() => {
-      return this.backend.getNextBatchToken();
-    }, "getSavedSyncToken"));
-    _defineProperty(this, "deleteAllData", this.degradable(() => {
-      super.deleteAllData();
-      return this.backend.clearDatabase().then(() => {
-        logger.log("Deleted indexeddb data.");
-      }, (err) => {
-        logger.error(`Failed to delete indexeddb data: ${err}`);
-        throw err;
-      });
-    }, null));
-    _defineProperty(this, "reallySave", this.degradable(() => {
-      this.syncTs = Date.now();
-      const userTuples = [];
-      for (const u of this.getUsers()) {
-        if (this.userModifiedMap[u.userId] === u.getLastModifiedTime()) continue;
-        if (!u.events.presence) continue;
-        userTuples.push([u.userId, u.events.presence.event]);
-        this.userModifiedMap[u.userId] = u.getLastModifiedTime();
-      }
-      return this.backend.syncToDatabase(userTuples);
-    }, null));
-    _defineProperty(this, "setSyncData", this.degradable((syncData) => {
-      return this.backend.setSyncData(syncData);
-    }, "setSyncData"));
-    _defineProperty(this, "getOutOfBandMembers", this.degradable((roomId) => {
-      return this.backend.getOutOfBandMembers(roomId);
-    }, "getOutOfBandMembers"));
-    _defineProperty(this, "setOutOfBandMembers", this.degradable((roomId, membershipEvents) => {
-      super.setOutOfBandMembers(roomId, membershipEvents);
-      return this.backend.setOutOfBandMembers(roomId, membershipEvents);
-    }, "setOutOfBandMembers"));
-    _defineProperty(this, "clearOutOfBandMembers", this.degradable((roomId) => {
-      super.clearOutOfBandMembers(roomId);
-      return this.backend.clearOutOfBandMembers(roomId);
-    }, "clearOutOfBandMembers"));
-    _defineProperty(this, "getClientOptions", this.degradable(() => {
-      return this.backend.getClientOptions();
-    }, "getClientOptions"));
-    _defineProperty(this, "storeClientOptions", this.degradable((options) => {
-      super.storeClientOptions(options);
-      return this.backend.storeClientOptions(options);
-    }, "storeClientOptions"));
-    this.opts = opts;
-    if (!opts.indexedDB) {
-      throw new Error("Missing required option: indexedDB");
-    }
-    if (opts.workerFactory) {
-      this._backend = new RemoteIndexedDBStoreBackend(opts.workerFactory, opts.dbName);
-    } else {
-      this._backend = new LocalIndexedDBStoreBackend(opts.indexedDB, opts.dbName);
-    }
-  }
-  /**
-   * The backend instance.
-   * Call through to this API if you need to perform specific indexeddb actions like deleting the database.
-   */
-  get backend() {
-    return this._backend;
-  }
-  /** Re-exports `TypedEventEmitter.on` */
-  on(event, handler) {
-    this.emitter.on(event, handler);
-  }
-  /**
-   * @returns Resolved when loaded from indexed db.
-   */
-  startup() {
-    if (this.startedUp) {
-      logger.log(`IndexedDBStore.startup: already started`);
-      return Promise.resolve();
-    }
-    logger.log(`IndexedDBStore.startup: connecting to backend`);
-    return this.backend.connect(this.onClose).catch((e) => {
-      if (this.opts.workerFactory) {
-        logger.log("Falling back to local indexeddb backend");
-        this._backend = new LocalIndexedDBStoreBackend(this.opts.indexedDB, this.opts.dbName);
-        return this.backend.connect(this.onClose);
-      }
-      throw e;
-    }).then(() => {
-      logger.log(`IndexedDBStore.startup: loading presence events`);
-      return this.backend.getUserPresenceEvents();
-    }).then((userPresenceEvents) => {
-      logger.log(`IndexedDBStore.startup: processing presence events`);
-      userPresenceEvents.forEach(([userId, rawEvent]) => {
-        if (!this.createUser) {
-          throw new Error("`IndexedDBStore.startup` must be called after assigning it to the client, not before!");
-        }
-        const u = this.createUser(userId);
-        if (rawEvent) {
-          u.setPresenceEvent(new MatrixEvent(rawEvent));
-        }
-        this.userModifiedMap[u.userId] = u.getLastModifiedTime();
-        this.storeUser(u);
-      });
-      this.startedUp = true;
-    });
-  }
-  /*
-   * Close the database and destroy any associated workers
-   */
-  destroy() {
-    return this.backend.destroy();
-  }
-  /**
-   * Whether this store would like to save its data
-   * Note that obviously whether the store wants to save or
-   * not could change between calling this function and calling
-   * save().
-   *
-   * @returns True if calling save() will actually save
-   *     (at the time this function is called).
-   */
-  wantsSave() {
-    const now = Date.now();
-    return now - this.syncTs > WRITE_DELAY_MS;
-  }
-  /**
-   * Possibly write data to the database.
-   *
-   * @param force - True to force a save to happen
-   * @returns Promise resolves after the write completes
-   *     (or immediately if no write is performed)
-   */
-  save(force = false) {
-    if (force || this.wantsSave()) {
-      return this.reallySave();
-    }
-    return Promise.resolve();
-  }
-  /**
-   * All member functions of `IndexedDBStore` that access the backend use this wrapper to
-   * watch for failures after initial store startup, including `QuotaExceededError` as
-   * free disk space changes, etc.
-   *
-   * When IndexedDB fails via any of these paths, we degrade this back to a `MemoryStore`
-   * in place so that the current operation and all future ones are in-memory only.
-   *
-   * @param func - The degradable work to do.
-   * @param fallback - The method name for fallback.
-   * @returns A wrapped member function.
-   */
-  degradable(func, fallback) {
-    const fallbackFn = fallback ? super[fallback] : null;
-    return async (...args) => {
-      try {
-        return await func.call(this, ...args);
-      } catch (e) {
-        logger.error("IndexedDBStore failure, degrading to MemoryStore", e);
-        this.emitter.emit("degraded", e);
-        try {
-          logger.log("IndexedDBStore trying to delete degraded data");
-          await this.backend.clearDatabase();
-          logger.log("IndexedDBStore delete after degrading succeeded");
-        } catch (e2) {
-          logger.warn("IndexedDBStore delete after degrading failed", e2);
-        }
-        if (fallbackFn) {
-          return fallbackFn.call(this, ...args);
-        }
-      }
-    };
-  }
-  // XXX: ideally these would be stored in indexeddb as part of the room but,
-  // we don't store rooms as such and instead accumulate entire sync responses atm.
-  async getPendingEvents(roomId) {
-    if (!this.localStorage) return super.getPendingEvents(roomId);
-    const serialized = this.localStorage.getItem(pendingEventsKey(roomId));
-    if (serialized) {
-      try {
-        return JSON.parse(serialized);
-      } catch (e) {
-        logger.error("Could not parse persisted pending events", e);
-      }
-    }
-    return [];
-  }
-  async setPendingEvents(roomId, events) {
-    if (!this.localStorage) return super.setPendingEvents(roomId, events);
-    if (events.length > 0) {
-      this.localStorage.setItem(pendingEventsKey(roomId), JSON.stringify(events));
-    } else {
-      this.localStorage.removeItem(pendingEventsKey(roomId));
-    }
-  }
-  saveToDeviceBatches(batches) {
-    return this.backend.saveToDeviceBatches(batches);
-  }
-  getOldestToDeviceBatch() {
-    return this.backend.getOldestToDeviceBatch();
-  }
-  removeToDeviceBatch(id) {
-    return this.backend.removeToDeviceBatch(id);
-  }
-  async getUserProfile(userId) {
-    return this.backend.getUserProfile(userId);
-  }
-  async storeUserProfiles(userProfiles) {
-    return this.backend.storeUserProfiles(userProfiles);
-  }
-  async removeUserProfiles(userIds) {
-    return this.backend.removeUserProfiles(userIds);
-  }
-};
-function pendingEventsKey(roomId) {
-  return `mx_pending_events_${roomId}`;
-}
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_memory_crypto_store();
-init_localStorage_crypto_store();
-init_indexeddb_crypto_store();
-init_content_repo();
-init_event();
-init_PushRules();
-init_partials();
-init_requests();
-init_search();
-init_beacon2();
-init_topic();
-init_location();
-
-// node_modules/matrix-js-sdk/lib/@types/threepids.js
-var ThreepidMedium = /* @__PURE__ */ (function(ThreepidMedium2) {
-  ThreepidMedium2["Email"] = "email";
-  ThreepidMedium2["Phone"] = "msisdn";
-  return ThreepidMedium2;
-})({});
-
-// node_modules/matrix-js-sdk/lib/@types/auth.js
-init_NamespacedValue();
-var OAUTH_AWARE_PREFERRED_FLOW_FIELD = new UnstableValue("oauth_aware_preferred", "org.matrix.msc3824.delegated_oidc_compatibility");
-var IdentityProviderBrand = /* @__PURE__ */ (function(IdentityProviderBrand2) {
-  IdentityProviderBrand2["Gitlab"] = "gitlab";
-  IdentityProviderBrand2["Github"] = "github";
-  IdentityProviderBrand2["Apple"] = "apple";
-  IdentityProviderBrand2["Google"] = "google";
-  IdentityProviderBrand2["Facebook"] = "facebook";
-  IdentityProviderBrand2["Twitter"] = "twitter";
-  return IdentityProviderBrand2;
-})({});
-var SSOAction = /* @__PURE__ */ (function(SSOAction2) {
-  SSOAction2["LOGIN"] = "login";
-  SSOAction2["REGISTER"] = "register";
-  return SSOAction2;
-})({});
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_polls();
-init_retention();
-init_read_receipts();
-init_extensible_events();
-init_membership();
-init_room_summary();
-init_event_status();
-
-// node_modules/matrix-js-sdk/lib/models/profile-keys.js
-var ProfileKeyTimezone = "m.tz";
-var ProfileKeyMSC4175Timezone = "us.cloke.msc4175.tz";
-
-// node_modules/matrix-js-sdk/lib/models/related-relations.js
-init_defineProperty();
-var RelatedRelations = class {
-  constructor(relations) {
-    _defineProperty(this, "relations", void 0);
-    this.relations = relations.filter((r) => !!r);
-  }
-  getRelations() {
-    return this.relations.reduce((c, p) => [...c, ...p.getRelations()], []);
-  }
-  on(ev, fn) {
-    this.relations.forEach((r) => r.on(ev, fn));
-  }
-  off(ev, fn) {
-    this.relations.forEach((r) => r.off(ev, fn));
-  }
-};
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_room_sticky_events();
-init_content_helpers();
-init_secret_storage();
-init_call();
-init_groupCall();
-init_sync2();
-init_sliding_sync();
-init_mediaHandler();
-init_callFeed();
-init_statsReport();
-init_relations();
-init_typed_event_emitter();
-
-// node_modules/matrix-js-sdk/lib/store/local-storage-events-emitter.js
-init_typed_event_emitter();
-var LocalStorageErrors = /* @__PURE__ */ (function(LocalStorageErrors2) {
-  LocalStorageErrors2["Global"] = "Global";
-  LocalStorageErrors2["SetItemError"] = "setItem";
-  LocalStorageErrors2["GetItemError"] = "getItem";
-  LocalStorageErrors2["RemoveItemError"] = "removeItem";
-  LocalStorageErrors2["ClearError"] = "clear";
-  LocalStorageErrors2["QuotaExceededError"] = "QuotaExceededError";
-  return LocalStorageErrors2;
-})({});
-var LocalStorageErrorsEventsEmitter = class extends TypedEventEmitter {
-};
-var localStorageErrorsEventsEmitter = new LocalStorageErrorsEventsEmitter();
-
-// node_modules/matrix-js-sdk/lib/matrix.js
-init_location();
-init_logger();
-var cryptoStoreFactory = () => new MemoryCryptoStore();
 function setCryptoStoreFactory(fac) {
   cryptoStoreFactory = fac;
 }
@@ -69770,1081 +69520,1416 @@ function createClient(opts) {
 function createRoomWidgetClient(widgetApi, capabilities, roomId, opts, sendContentLoaded = true) {
   return new RoomWidgetClient(widgetApi, capabilities, roomId, amendClientOpts(opts), sendContentLoaded);
 }
+var cryptoStoreFactory;
+var init_matrix = __esm({
+  "node_modules/matrix-js-sdk/lib/matrix.js"() {
+    init_memory_crypto_store();
+    init_memory();
+    init_scheduler();
+    init_client();
+    init_embedded();
+    init_client();
+    init_serverCapabilities();
+    init_embedded();
+    init_http_api();
+    init_autodiscovery();
+    init_sync_accumulator();
+    init_errors2();
+    init_base64();
+    init_beacon();
+    init_event2();
+    init_room();
+    init_event_timeline();
+    init_event_timeline_set();
+    init_poll();
+    init_room_member();
+    init_room_state();
+    init_thread();
+    init_typed_event_emitter();
+    init_user();
+    init_device();
+    init_search_result();
+    init_oauth();
+    init_scheduler();
+    init_filter();
+    init_timeline_window();
+    init_interactive_auth();
+    init_version_support();
+    init_service_types();
+    init_memory();
+    init_indexeddb();
+    init_memory_crypto_store();
+    init_localStorage_crypto_store();
+    init_indexeddb_crypto_store();
+    init_content_repo();
+    init_event();
+    init_PushRules();
+    init_partials();
+    init_requests();
+    init_search();
+    init_beacon2();
+    init_topic();
+    init_location();
+    init_threepids();
+    init_auth();
+    init_polls();
+    init_retention();
+    init_read_receipts();
+    init_extensible_events();
+    init_membership();
+    init_room_summary();
+    init_event_status();
+    init_profile_keys();
+    init_related_relations();
+    init_room_sticky_events();
+    init_content_helpers();
+    init_secret_storage();
+    init_call();
+    init_groupCall();
+    init_sync2();
+    init_sliding_sync();
+    init_mediaHandler();
+    init_callFeed();
+    init_statsReport();
+    init_relations();
+    init_typed_event_emitter();
+    init_local_storage_events_emitter();
+    init_auth();
+    init_location();
+    init_logger();
+    cryptoStoreFactory = () => new MemoryCryptoStore();
+  }
+});
 
 // node_modules/matrix-js-sdk/lib/browser-index.js
-if (globalThis.__js_sdk_entrypoint) {
-  throw new Error("Multiple matrix-js-sdk entrypoints detected!");
-}
-globalThis.__js_sdk_entrypoint = true;
 var indexedDB;
-try {
-  indexedDB = globalThis.indexedDB;
-} catch {
-}
-if (indexedDB) {
-  setCryptoStoreFactory(() => new IndexedDBCryptoStore(indexedDB, "matrix-js-sdk:crypto"));
-}
-globalThis.matrixcs = matrix_exports;
+var init_browser_index = __esm({
+  "node_modules/matrix-js-sdk/lib/browser-index.js"() {
+    init_matrix();
+    init_matrix();
+    if (globalThis.__js_sdk_entrypoint) {
+      throw new Error("Multiple matrix-js-sdk entrypoints detected!");
+    }
+    globalThis.__js_sdk_entrypoint = true;
+    try {
+      indexedDB = globalThis.indexedDB;
+    } catch {
+    }
+    if (indexedDB) {
+      setCryptoStoreFactory(() => new IndexedDBCryptoStore(indexedDB, "matrix-js-sdk:crypto"));
+    }
+    globalThis.matrixcs = matrix_exports;
+  }
+});
+
+// node_modules/matrix-encrypt-attachment/lib/browser-encrypt-attachment.js
+var require_browser_encrypt_attachment = __commonJS({
+  "node_modules/matrix-encrypt-attachment/lib/browser-encrypt-attachment.js"(exports, module2) {
+    (function(f) {
+      if (typeof exports === "object" && typeof module2 !== "undefined") {
+        module2.exports = f();
+      } else if (typeof define === "function" && define.amd) {
+        define([], f);
+      } else {
+        var g;
+        if (typeof window !== "undefined") {
+          g = window;
+        } else if (typeof globalThis !== "undefined") {
+          g = globalThis;
+        } else if (typeof self !== "undefined") {
+          g = self;
+        } else {
+          g = this;
+        }
+        g.MatrixEncryptAttachment = f();
+      }
+    })(function() {
+      var define2, module3, exports2;
+      return (/* @__PURE__ */ (function() {
+        function r(e, n, t) {
+          function o(i2, f) {
+            if (!n[i2]) {
+              if (!e[i2]) {
+                var c = "function" == typeof __require && __require;
+                if (!f && c) return c(i2, true);
+                if (u) return u(i2, true);
+                var a = new Error("Cannot find module '" + i2 + "'");
+                throw a.code = "MODULE_NOT_FOUND", a;
+              }
+              var p = n[i2] = { exports: {} };
+              e[i2][0].call(p.exports, function(r2) {
+                var n2 = e[i2][1][r2];
+                return o(n2 || r2);
+              }, p, p.exports, r, e, n, t);
+            }
+            return n[i2].exports;
+          }
+          for (var u = "function" == typeof __require && __require, i = 0; i < t.length; i++) o(t[i]);
+          return o;
+        }
+        return r;
+      })())({ 1: [function(require2, module4, exports3) {
+        "use strict";
+        var __awaiter = this && this.__awaiter || function(thisArg, _arguments, P, generator) {
+          function adopt(value) {
+            return value instanceof P ? value : new P(function(resolve) {
+              resolve(value);
+            });
+          }
+          return new (P || (P = Promise))(function(resolve, reject) {
+            function fulfilled(value) {
+              try {
+                step(generator.next(value));
+              } catch (e) {
+                reject(e);
+              }
+            }
+            function rejected(value) {
+              try {
+                step(generator["throw"](value));
+              } catch (e) {
+                reject(e);
+              }
+            }
+            function step(result) {
+              result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+            }
+            step((generator = generator.apply(thisArg, _arguments || [])).next());
+          });
+        };
+        var __generator = this && this.__generator || function(thisArg, body) {
+          var _ = { label: 0, sent: function() {
+            if (t[0] & 1) throw t[1];
+            return t[1];
+          }, trys: [], ops: [] }, f, y, t, g;
+          return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() {
+            return this;
+          }), g;
+          function verb(n) {
+            return function(v) {
+              return step([n, v]);
+            };
+          }
+          function step(op) {
+            if (f) throw new TypeError("Generator is already executing.");
+            while (_) try {
+              if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+              if (y = 0, t) op = [op[0] & 2, t.value];
+              switch (op[0]) {
+                case 0:
+                case 1:
+                  t = op;
+                  break;
+                case 4:
+                  _.label++;
+                  return { value: op[1], done: false };
+                case 5:
+                  _.label++;
+                  y = op[1];
+                  op = [0];
+                  continue;
+                case 7:
+                  op = _.ops.pop();
+                  _.trys.pop();
+                  continue;
+                default:
+                  if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) {
+                    _ = 0;
+                    continue;
+                  }
+                  if (op[0] === 3 && (!t || op[1] > t[0] && op[1] < t[3])) {
+                    _.label = op[1];
+                    break;
+                  }
+                  if (op[0] === 6 && _.label < t[1]) {
+                    _.label = t[1];
+                    t = op;
+                    break;
+                  }
+                  if (t && _.label < t[2]) {
+                    _.label = t[2];
+                    _.ops.push(op);
+                    break;
+                  }
+                  if (t[2]) _.ops.pop();
+                  _.trys.pop();
+                  continue;
+              }
+              op = body.call(thisArg, _);
+            } catch (e) {
+              op = [6, e];
+              y = 0;
+            } finally {
+              f = t = 0;
+            }
+            if (op[0] & 5) throw op[1];
+            return { value: op[0] ? op[1] : void 0, done: true };
+          }
+        };
+        Object.defineProperty(exports3, "__esModule", { value: true });
+        exports3.decodeBase64 = exports3.encodeBase64 = exports3.decryptAttachment = exports3.encryptAttachment = void 0;
+        function encryptAttachment(plaintextBuffer) {
+          return __awaiter(this, void 0, void 0, function() {
+            var ivArray, cryptoKey, exportedKey, ciphertextBuffer, sha256Buffer;
+            return __generator(this, function(_a) {
+              switch (_a.label) {
+                case 0:
+                  ivArray = new Uint8Array(16);
+                  window.crypto.getRandomValues(ivArray.subarray(0, 8));
+                  return [4, window.crypto.subtle.generateKey({ "name": "AES-CTR", "length": 256 }, true, ["encrypt", "decrypt"])];
+                case 1:
+                  cryptoKey = _a.sent();
+                  return [4, window.crypto.subtle.exportKey("jwk", cryptoKey)];
+                case 2:
+                  exportedKey = _a.sent();
+                  return [4, window.crypto.subtle.encrypt({ name: "AES-CTR", counter: ivArray, length: 64 }, cryptoKey, plaintextBuffer)];
+                case 3:
+                  ciphertextBuffer = _a.sent();
+                  return [4, window.crypto.subtle.digest("SHA-256", ciphertextBuffer)];
+                case 4:
+                  sha256Buffer = _a.sent();
+                  return [2, {
+                    data: ciphertextBuffer,
+                    info: {
+                      v: "v2",
+                      key: exportedKey,
+                      iv: encodeBase642(ivArray),
+                      hashes: {
+                        sha256: encodeBase642(new Uint8Array(sha256Buffer))
+                      }
+                    }
+                  }];
+              }
+            });
+          });
+        }
+        exports3.encryptAttachment = encryptAttachment;
+        function decryptAttachment(ciphertextBuffer, info) {
+          return __awaiter(this, void 0, void 0, function() {
+            var ivArray, expectedSha256base64, cryptoKey, digestResult, counterLength;
+            return __generator(this, function(_a) {
+              switch (_a.label) {
+                case 0:
+                  if (info === void 0 || info.key === void 0 || info.iv === void 0 || info.hashes === void 0 || info.hashes.sha256 === void 0) {
+                    throw new Error("Invalid info. Missing info.key, info.iv or info.hashes.sha256 key");
+                  }
+                  if (info.v && !info.v.match(/^v[1-2]$/)) {
+                    throw new Error("Unsupported protocol version: " + info.v);
+                  }
+                  ivArray = decodeBase642(info.iv);
+                  expectedSha256base64 = info.hashes.sha256;
+                  return [4, window.crypto.subtle.importKey("jwk", info.key, { "name": "AES-CTR" }, false, ["encrypt", "decrypt"])];
+                case 1:
+                  cryptoKey = _a.sent();
+                  return [4, window.crypto.subtle.digest("SHA-256", ciphertextBuffer)];
+                case 2:
+                  digestResult = _a.sent();
+                  if (encodeBase642(new Uint8Array(digestResult)) != expectedSha256base64) {
+                    throw new Error("Mismatched SHA-256 digest");
+                  }
+                  if (info.v == "v1" || info.v == "v2") {
+                    counterLength = 64;
+                  } else {
+                    counterLength = 128;
+                  }
+                  return [2, window.crypto.subtle.decrypt({ name: "AES-CTR", counter: ivArray, length: counterLength }, cryptoKey, ciphertextBuffer)];
+              }
+            });
+          });
+        }
+        exports3.decryptAttachment = decryptAttachment;
+        function encodeBase642(uint8Array) {
+          var latin1String = String.fromCharCode.apply(null, uint8Array);
+          var paddedBase64 = window.btoa(latin1String);
+          var inputLength = uint8Array.length;
+          var outputLength = 4 * Math.floor((inputLength + 2) / 3) + (inputLength + 2) % 3 - 2;
+          return paddedBase64.slice(0, outputLength);
+        }
+        exports3.encodeBase64 = encodeBase642;
+        function decodeBase642(base64) {
+          var paddedBase64 = base64 + "===".slice(0, (4 - base64.length % 4) % 4);
+          var latin1String = window.atob(paddedBase64);
+          var uint8Array = new Uint8Array(latin1String.length);
+          for (var i = 0; i < latin1String.length; i++) {
+            uint8Array[i] = latin1String.charCodeAt(i);
+          }
+          return uint8Array;
+        }
+        exports3.decodeBase64 = decodeBase642;
+        exports3.default = {
+          encryptAttachment,
+          decryptAttachment,
+          encodeBase64: encodeBase642,
+          decodeBase64: decodeBase642
+        };
+      }, {}] }, {}, [1])(1);
+    });
+  }
+});
 
 // src/app.js
-init_matrix_sdk_crypto_wasm();
-var import_matrix_encrypt_attachment = __toESM(require_browser_encrypt_attachment());
-(function() {
-  "use strict";
-  var HS = "https://143-110-180-166.sslip.io", SN = "143-110-180-166.sslip.io";
-  var UI = window.HavenUI;
-  var g = function(id) {
-    return document.getElementById(id);
-  };
-  var qs = function(s, r) {
-    return (r || document).querySelector(s);
-  };
-  function twoPane() {
-    return window.matchMedia("(min-width:720px)").matches;
-  }
-  var st = document.createElement("style");
-  st.textContent = ".row{animation:none!important}.rnew{animation:hvpop .32s cubic-bezier(.2,.7,.2,1)}@keyframes hvpop{from{opacity:0;transform:translateY(9px) scale(.97)}to{opacity:1;transform:none}}.empty-note{padding:28px 20px;text-align:center;color:#7c8a83;font-size:14px;line-height:1.5}.srch-res{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:12px;background:rgba(20,40,34,.05);margin-top:7px;font-size:14.5px;text-align:left;border:0;cursor:pointer;color:inherit}.srch-res small{color:#8a938c;margin-left:auto}.srch-res .av{width:30px;height:30px;font-size:12px}img.msg-img{max-width:230px;width:66vw;border-radius:12px;display:block;background:rgba(20,40,34,.06);min-height:70px;object-fit:cover}.msg .meta .tick{width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-left:2px}.row.me .meta .tick{color:rgba(238,246,242,.55)}.row.me .meta .tick.read{color:#66c6ff}.enc-banner{align-self:center;max-width:82%;text-align:center;font-size:12px;line-height:1.45;color:#5c6f66;background:rgba(230,180,90,.14);border:1px solid rgba(230,180,90,.28);border-radius:12px;padding:8px 14px;margin:6px auto 12px;display:flex;gap:7px;align-items:center;justify-content:center}.enc-banner svg{width:13px;height:13px;color:#c79a3f;flex:none}@media(prefers-reduced-motion:reduce){.rnew{animation:none}}";
-  document.head.appendChild(st);
-  function esc(s) {
-    return (s || "").replace(/[&<>"]/g, function(c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
-    });
-  }
-  function shortName(uid) {
-    return (uid || "").split(":")[0].replace("@", "");
-  }
-  function initials(s) {
-    s = (s || "?").replace(/^@/, "");
-    var p = s.trim().split(/[\s._-]+/);
-    return ((p[0] || "?")[0] + ((p[1] || "")[0] || (p[0] || "")[1] || "")).toUpperCase();
-  }
-  function gav(s) {
-    var h = 0;
-    s = s || "";
-    for (var i = 0; i < s.length; i++) h = h * 31 + s.charCodeAt(i) >>> 0;
-    return "g" + (h % 6 + 1);
-  }
-  function fmtTime(ts) {
-    return new Date(ts).toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit" });
-  }
-  function fmtDay(ts) {
-    var d = new Date(ts), n = /* @__PURE__ */ new Date();
-    if (d.toDateString() === n.toDateString()) return "Today";
-    var y = new Date(n - 864e5);
-    if (d.toDateString() === y.toDateString()) return "Yesterday";
-    return d.toLocaleDateString(void 0, { day: "numeric", month: "short" });
-  }
-  function fmtDur(ms) {
-    if (!ms) return "0:05";
-    var s = Math.round(ms / 1e3);
-    return Math.floor(s / 60) + ":" + ("0" + s % 60).slice(-2);
-  }
-  function cleanBody(m) {
-    var b = m && m.body || "";
-    if (m && m.reply && b.indexOf("> ") === 0) {
-      var ix = b.indexOf("\n\n");
-      if (ix >= 0) b = b.slice(ix + 2);
-    }
-    return b;
-  }
-  function previewText(m) {
-    if (!m) return "";
-    if (m.kind === "image") return "Photo";
-    if (m.kind === "audio") return "Voice message";
-    return cleanBody(m);
-  }
-  function wave() {
-    var s = "";
-    for (var i = 0; i < 18; i++) s += '<i style="height:' + (25 + i * 41 % 70) + '%"></i>';
-    return s;
-  }
-  function roomEncrypted(room) {
-    try {
-      if (room.hasEncryptionStateEvent) return room.hasEncryptionStateEvent();
-    } catch (e) {
-    }
-    try {
-      return !!room.currentState.getStateEvents("m.room.encryption", "");
-    } catch (e) {
-    }
-    return false;
-  }
-  var M = { client: null, userId: null, dname: null, rooms: {}, order: [], invites: {}, current: null, _seen: {} };
-  var replyTarget = null, sheetCtx = null, blobCache = {};
-  async function login(u, p) {
-    await initAsync(new URL("matrix_sdk_crypto_wasm_bg.wasm", import.meta.url));
-    var tmp = createClient({ baseUrl: HS });
-    var res = await tmp.login("m.login.password", { identifier: { type: "m.id.user", user: u }, password: p });
-    M.userId = res.user_id;
-    var c = createClient({ baseUrl: HS, userId: res.user_id, accessToken: res.access_token, deviceId: res.device_id });
-    M.client = c;
-    await c.initRustCrypto();
-    await c.startClient({ initialSyncLimit: 30 });
-    await new Promise(function(resolve) {
-      c.on(ClientEvent.Sync, function(s) {
-        if (s === "PREPARED") resolve();
-      });
-    });
-    try {
-      var pr = await c.getProfileInfo(res.user_id);
-      M.dname = pr.displayname || shortName(res.user_id);
-    } catch (e) {
-      M.dname = shortName(res.user_id);
-    }
-    var deb = null;
-    function bump() {
-      clearTimeout(deb);
-      deb = setTimeout(function() {
-        rebuild();
-        refresh();
-      }, 220);
-    }
-    c.on(RoomEvent.Timeline, bump);
-    c.on(MatrixEventEvent.Decrypted, bump);
-    c.on(RoomEvent.Receipt, bump);
-    c.on(RoomMemberEvent.Typing, bump);
-    c.on(RoomStateEvent.Members, bump);
-    c.on(ClientEvent.Room, bump);
-    c.on("Room.localEchoUpdated", bump);
-    c.on(RoomEvent.Redaction, bump);
-    rebuild();
-    return res;
-  }
-  function rebuild() {
-    var c = M.client;
-    if (!c) return;
-    M.rooms = {};
-    M.order = [];
-    M.invites = {};
-    c.getRooms().forEach(function(room) {
-      var mem = room.getMyMembership();
-      if (mem === "invite") {
-        buildInvite(room);
-        return;
-      }
-      if (mem !== "join") return;
-      buildJoin(room);
-    });
-  }
-  function buildInvite(room) {
-    var me = room.getMember(M.userId);
-    var mev = me && me.events && me.events.member;
-    var reason = mev ? mev.getContent().reason || null : null;
-    var from = mev ? mev.getSender() : room.getDMInviter && room.getDMInviter();
-    var fromName = from && room.getMember(from) ? room.getMember(from).name : shortName(from || "");
-    M.invites[room.roomId] = { id: room.roomId, from, fromName, note: reason, name: room.name };
-  }
-  function buildJoin(room) {
-    var rid = room.roomId;
-    M._seen[rid] = M._seen[rid] || {};
-    var r = { id: rid, name: room.name, members: {}, evs: {}, order: [], reacts: {}, receipts: {}, seen: M._seen[rid], last: 0, typing: [], dm: false, other: null, display: room.name || "Chat", encrypted: roomEncrypted(room) };
-    var joined = room.getJoinedMembers();
-    joined.forEach(function(mm) {
-      r.members[mm.userId] = mm.name || shortName(mm.userId);
-    });
-    var others = joined.filter(function(mm) {
-      return mm.userId !== M.userId;
-    });
-    r.dm = others.length === 1;
-    r.other = others.length ? others[0].userId : null;
-    r.display = room.name || others.map(function(o) {
-      return o.name || shortName(o.userId);
-    }).join(", ") || "Chat";
-    r.typing = room.getMembers().filter(function(mm) {
-      return mm.typing && mm.userId !== M.userId;
-    }).map(function(mm) {
-      return mm.name || shortName(mm.userId);
-    });
-    room.getLiveTimeline().getEvents().forEach(function(ev) {
-      ingestEvent(r, ev);
-    });
-    Object.keys(r.members).forEach(function(u) {
-      if (u === M.userId) return;
-      try {
-        var eid = room.getEventReadUpTo(u, false);
-        if (eid) r.receipts[u] = { eid };
-      } catch (e) {
-      }
-    });
-    var evs = room.getLiveTimeline().getEvents();
-    r.last = evs.length ? evs[evs.length - 1].getTs() : 0;
-    M.rooms[rid] = r;
-    M.order.push(rid);
-  }
-  function ingestEvent(r, ev) {
-    var type = ev.getType();
-    if (type === "m.reaction") {
-      var rel = ev.getContent()["m.relates_to"];
-      if (!rel || rel.rel_type !== "m.annotation") return;
-      var tgt = rel.event_id, key = rel.key;
-      var mm = r.reacts[tgt] || (r.reacts[tgt] = {});
-      var e = mm[key] || (mm[key] = { count: 0, mine: false, mineEv: null });
-      e.count++;
-      if (ev.getSender() === M.userId) {
-        e.mine = true;
-        e.mineEv = ev.getId();
-      }
-      return;
-    }
-    if (type === "m.room.message") {
-      var eid = ev.getId();
-      if (r.evs[eid]) return;
-      var c = ev.getContent(), kind = "text", mxc = null, file = null;
-      if (c.msgtype === "m.image") {
-        kind = "image";
-        mxc = c.url;
-        file = c.file;
-      } else if (c.msgtype === "m.audio") {
-        kind = "audio";
-        mxc = c.url;
-        file = c.file;
-      }
-      var reply = c["m.relates_to"] && c["m.relates_to"]["m.in_reply_to"] && c["m.relates_to"]["m.in_reply_to"].event_id || null;
-      var msg = { id: eid, kind, sender: ev.getSender(), name: r.members[ev.getSender()] || shortName(ev.getSender()), body: c.body || "", ts: ev.getTs() || Date.now(), mxc, file, info: c.info || {}, reply, deleted: ev.isRedacted(), status: ev.status };
-      r.evs[eid] = msg;
-      r.order.push(eid);
-    }
-  }
-  async function mediaURL(msg) {
-    var mxc = msg.file ? msg.file.url : msg.mxc;
-    if (!mxc) return null;
-    if (blobCache[mxc]) return blobCache[mxc];
-    var m = mxc.replace("mxc://", "").split("/");
-    var r = await fetch(HS + "/_matrix/client/v1/media/download/" + m[0] + "/" + m[1], { headers: { Authorization: "Bearer " + M.client.getAccessToken() } });
-    if (!r.ok) throw new Error("media " + r.status);
-    var buf = await r.arrayBuffer();
-    var data = msg.file ? await (0, import_matrix_encrypt_attachment.decryptAttachment)(buf, msg.file) : buf;
-    var blob = new Blob([data], { type: msg.info && msg.info.mimetype || "application/octet-stream" });
-    var u = URL.createObjectURL(blob);
-    blobCache[mxc] = u;
-    return u;
-  }
-  async function uploadEncryptable(rid, blob, mimetype) {
-    var room = M.client.getRoom(rid), enc = room && roomEncrypted(room);
-    if (enc) {
-      var res = await (0, import_matrix_encrypt_attachment.encryptAttachment)(await blob.arrayBuffer());
-      var up = await M.client.uploadContent(new Blob([res.data]), { type: "application/octet-stream", includeFilename: false });
-      var fileInfo = res.info;
-      fileInfo.url = up.content_uri;
-      fileInfo.mimetype = mimetype;
-      return { file: fileInfo, url: null };
-    } else {
-      var up2 = await M.client.uploadContent(blob, { type: mimetype });
-      return { file: null, url: up2.content_uri };
-    }
-  }
-  async function react(rid, tgt, key) {
-    var r = M.rooms[rid];
-    if (!r) return;
-    var rc = r.reacts[tgt] || {};
-    var ex = rc[key];
-    if (ex && ex.mine && ex.mineEv) {
-      try {
-        await M.client.redactEvent(rid, ex.mineEv);
-      } catch (e) {
-      }
-    } else {
-      var mine = Object.keys(rc).filter(function(k) {
-        return rc[k].mine;
-      });
-      if (mine.length >= 2) {
-        UI.toast("Up to 2 reactions per message");
-        return;
-      }
-      try {
-        await M.client.sendEvent(rid, "m.reaction", { "m.relates_to": { rel_type: "m.annotation", event_id: tgt, key } });
-      } catch (e) {
-        UI.toast("Reaction failed");
-      }
-    }
-  }
-  async function redactMsg(rid, eid) {
-    try {
-      await M.client.redactEvent(rid, eid);
-    } catch (e) {
-      UI.toast("Delete failed");
-    }
-  }
-  var typingSent = 0;
-  function sendTyping(rid, on) {
-    var now = Date.now();
-    if (on && now - typingSent < 3500) return;
-    typingSent = on ? now : 0;
-    try {
-      M.client.sendTyping(rid, on, 5e3);
-    } catch (e) {
-    }
-  }
-  function markRead(rid) {
-    var room = M.client.getRoom(rid);
-    if (!room) return;
-    var evs = room.getLiveTimeline().getEvents();
-    var last = null;
-    for (var i = evs.length - 1; i >= 0; i--) {
-      var ev = evs[i];
-      var id = ev.getId && ev.getId();
-      if (!ev.status && id && id.indexOf("~") !== 0) {
-        last = ev;
-        break;
-      }
-    }
-    if (!last) return;
-    if (room._readSentId === last.getId()) return;
-    room._readSentId = last.getId();
-    try {
-      M.client.sendReadReceipt(last);
-    } catch (e) {
-    }
-  }
-  function ticks(r, m) {
-    if (m.status) return "sent";
-    var others = Object.keys(r.members).filter(function(u) {
-      return u !== M.userId && r.members[u];
-    });
-    if (!others.length) return "delivered";
-    var mi = r.order.indexOf(m.id);
-    if (mi < 0) return "delivered";
-    var all = others.every(function(u) {
-      var rc = r.receipts[u];
-      if (!rc) return false;
-      var ri = r.order.indexOf(rc.eid);
-      return ri >= 0 && ri >= mi;
-    });
-    return all ? "read" : "delivered";
-  }
-  function tickSvg(state) {
-    if (state === "sent") return ' <svg class="tick"><use href="#i-check"/></svg>';
-    if (state === "read") return ' <svg class="tick read"><use href="#i-checks"/></svg>';
-    return ' <svg class="tick"><use href="#i-checks"/></svg>';
-  }
-  function refresh() {
-    renderChats();
-    renderContacts();
-    renderRequests();
-    if (M.current) renderConvo(M.current);
-  }
-  function scrollConvo() {
-    var el = g("convo");
-    if (el) el.scrollTop = el.scrollHeight;
-  }
-  function renderChats() {
-    var list = g("chatList");
-    var ids = M.order.filter(function(id) {
-      return M.rooms[id];
-    }).sort(function(a, b) {
-      return (M.rooms[b].last || 0) - (M.rooms[a].last || 0);
-    });
-    var sig = ids.map(function(id) {
-      var r = M.rooms[id];
-      return id + (r.last || 0) + (r.typing.length ? "t" : "") + r.order.length;
-    }).join("|");
-    if (list._sig === sig) return;
-    list._sig = sig;
-    if (!ids.length) {
-      list.innerHTML = '<div class="empty-note">No chats yet.<br>Add someone from the Contacts tab to start.</div>';
-      return;
-    }
-    list.innerHTML = ids.map(function(rid) {
-      var r = M.rooms[rid];
-      var last = r.order.length ? r.evs[r.order[r.order.length - 1]] : null;
-      var prev = r.typing.length ? '<span class="chat-prev" style="color:var(--sage,#2e6a60);font-weight:600">typing\u2026</span>' : '<span class="chat-prev">' + (last ? esc((last.sender === M.userId ? "You: " : "") + previewText(last)) : "Tap to open") + "</span>";
-      return '<div class="chat ripple' + (rid === M.current ? " active" : "") + '" data-id="' + esc(rid) + '"><div class="av ' + gav(r.display) + '">' + esc(initials(r.display)) + '</div><div class="chat-body"><div class="chat-top"><span class="chat-name">' + esc(r.display) + '</span><span class="chat-time">' + (r.last ? fmtTime(r.last) : "") + '</span></div><div class="chat-bot">' + prev + "</div></div></div>";
-    }).join("");
-  }
-  function convoSig(r) {
-    var rk = Object.keys(r.reacts).map(function(k) {
-      return k + Object.keys(r.reacts[k]).map(function(e) {
-        return e + r.reacts[k][e].count + (r.reacts[k][e].mine ? "m" : "");
-      }).join();
-    }).join();
-    var rcp = Object.keys(r.receipts).map(function(u) {
-      return u + (r.receipts[u].eid || "");
-    }).join();
-    var stt = r.order.map(function(e) {
-      return r.evs[e].status || "";
-    }).join("");
-    return r.order.length + "|" + (r.order[r.order.length - 1] || "") + "|" + rk + "|" + r.typing.join() + "|" + r.order.filter(function(e) {
-      return r.evs[e].deleted;
-    }).length + "|" + rcp + "|" + stt;
-  }
-  function renderConvo(rid, force) {
-    var r = M.rooms[rid];
-    if (!r) return;
-    var el = g("convo");
-    var sig = convoSig(r);
-    if (!force && r._sig === sig) return;
-    r._sig = sig;
-    var h = "", lastDay = "";
-    if (r.encrypted) h += '<div class="enc-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg> Messages here are end-to-end encrypted. Not even the server can read them.</div>';
-    r.order.forEach(function(eid) {
-      var m = r.evs[eid];
-      if (!m) return;
-      var day = fmtDay(m.ts);
-      if (day !== lastDay) {
-        h += '<div class="daysep">' + day + "</div>";
-        lastDay = day;
-      }
-      var me = m.sender === M.userId;
-      var isNew = !r.seen[eid];
-      h += '<div class="row ' + (me ? "me" : "them") + (isNew ? " rnew" : "") + '" data-eid="' + esc(eid) + '"><div class="msg" data-eid="' + esc(eid) + '">';
-      if (m.deleted) {
-        h += '<span class="txt" style="opacity:.55;font-style:italic">Deleted</span>';
-      } else {
-        if (!me && !r.dm) h += '<span class="q-name" style="display:block;font-size:12px;font-weight:700;color:var(--sage,#2e6a60);margin-bottom:2px">' + esc(m.name) + "</span>";
-        if (m.reply) {
-          var t = r.evs[m.reply];
-          h += '<span class="quote"><span class="q-name">' + esc(t ? t.name : "\u2026") + '</span><span class="q-body">' + esc(t ? previewText(t) : "message") + "</span></span>";
-        }
-        if (m.kind === "image") {
-          h += '<img class="msg-img" data-eid="' + esc(eid) + '" alt="photo">';
-        } else if (m.kind === "audio") {
-          h += '<div class="voice" data-eid="' + esc(eid) + '"><button class="vplay" aria-label="Play"><svg class="ic-play"><use href="#i-play"/></svg><svg class="ic-pause"><use href="#i-pause"/></svg></button><div class="vwave">' + wave() + '</div><span class="v-dur">' + fmtDur(m.info && m.info.duration) + "</span></div>";
-        } else {
-          h += '<span class="txt">' + esc(cleanBody(m)) + "</span>";
-        }
-      }
-      h += '<span class="meta">' + fmtTime(m.ts) + (me && !m.deleted ? tickSvg(ticks(r, m)) : "") + "</span></div>";
-      var rc = r.reacts[eid];
-      if (rc) {
-        var ks = Object.keys(rc);
-        if (ks.length) h += '<div class="reacts" style="' + (me ? "justify-content:flex-end" : "justify-content:flex-start") + '">' + ks.map(function(k) {
-          return '<span class="react' + (rc[k].mine ? " mine" : "") + '" data-eid="' + esc(eid) + '" data-key="' + esc(k) + '"><span class="r-em">' + k + "</span>" + rc[k].count + "</span>";
-        }).join("") + "</div>";
-      }
-      h += "</div>";
-    });
-    if (r.typing.length) h += '<div class="typing"><i></i><i></i><i></i></div>';
-    el.innerHTML = h || '<div class="daysep">Say hello</div>';
-    r.order.forEach(function(x) {
-      r.seen[x] = 1;
-    });
-    el.querySelectorAll("img.msg-img").forEach(function(img) {
-      var m = r.evs[img.getAttribute("data-eid")];
-      if (m) mediaURL(m).then(function(u) {
-        img.src = u;
-        scrollConvo();
-      }).catch(function() {
-      });
-    });
-    scrollConvo();
-    var sub = g("convoSub");
-    if (sub) sub.innerHTML = r.typing.length ? '<span class="dot"></span>typing\u2026' : '<span class="dot"></span>online';
-    if (rid === M.current) markRead(rid);
-  }
-  function renderContacts() {
-    var list = g("contactList");
-    if (!list) return;
-    var seen = {}, items = [];
-    M.order.forEach(function(rid) {
-      var r = M.rooms[rid];
-      if (r.dm && r.other && !seen[r.other]) {
-        seen[r.other] = 1;
-        items.push({ user: r.other, name: r.members[r.other] || shortName(r.other), rid });
-      }
-    });
-    var sig = items.map(function(i) {
-      return i.user;
-    }).join("|");
-    if (list._sig === sig) return;
-    list._sig = sig;
-    if (!items.length) {
-      list.innerHTML = '<div class="empty-note">No contacts yet.<br>Find someone by @username above.</div>';
-      return;
-    }
-    list.innerHTML = items.map(function(it) {
-      return '<div class="contact ripple" data-rid="' + esc(it.rid) + '"><div class="av ' + gav(it.name) + '">' + esc(initials(it.name)) + '</div><div class="contact-body"><div class="contact-name">' + esc(it.name) + '</div><div class="contact-sub">' + esc(shortName(it.user)) + '</div></div><div class="contact-act"><svg><use href="#i-chat"/></svg></div></div>';
-    }).join("");
-  }
-  function renderRequests() {
-    var list = g("requestList");
-    if (!list) return;
-    var ids = Object.keys(M.invites);
-    UI.setReqBadge(ids.length);
-    var sig = ids.join("|");
-    if (list._sig === sig) return;
-    list._sig = sig;
-    if (!ids.length) {
-      list.innerHTML = '<div class="empty-note">No pending requests.</div>';
-      return;
-    }
-    list.innerHTML = ids.map(function(rid) {
-      var q = M.invites[rid];
-      var nm = q.fromName || shortName(q.from || "");
-      return '<div class="req" data-id="' + esc(rid) + '"><div class="req-head"><div class="av ' + gav(nm) + '">' + esc(initials(nm)) + '</div><div class="req-meta"><div class="req-name">' + esc(nm) + '</div><div class="req-user">' + esc(shortName(q.from || "")) + '</div></div></div><div class="req-note">' + esc(q.note || "Wants to connect on Haven.") + '</div><div class="req-actions"><button class="req-accept ripple" data-id="' + esc(rid) + '"><svg><use href="#i-check"/></svg>Accept</button><button class="req-decline ripple" data-id="' + esc(rid) + '"><svg><use href="#i-x"/></svg>Decline</button></div></div>';
-    }).join("");
-  }
-  function openChat(rid) {
-    M.current = rid;
-    var r = M.rooms[rid];
-    if (!r) return;
-    g("convoName").textContent = r.display;
-    var hav = qs(".convo-head .av");
-    if (hav) {
-      hav.className = "av " + gav(r.display);
-      hav.textContent = initials(r.display);
-    }
-    var sub = g("convoSub");
-    if (sub) sub.innerHTML = '<span class="dot"></span>' + (r.typing.length ? "typing\u2026" : "online");
-    renderConvo(rid, true);
-    renderChats();
-    UI.openConvo();
-    setTimeout(function() {
-      var inp = g("input");
-      if (inp) inp.focus();
-    }, 60);
-  }
-  var curAudio = null, curVel = null;
-  async function playVoice(vel) {
-    try {
-      if (curVel === vel && curAudio && !curAudio.paused) {
-        curAudio.pause();
-        vel.classList.remove("playing");
-        return;
-      }
-      if (curAudio) {
-        curAudio.pause();
-      }
-      if (curVel) curVel.classList.remove("playing");
-      var m = M.rooms[M.current].evs[vel.getAttribute("data-eid")];
-      var u = await mediaURL(m);
-      curAudio = new Audio(u);
-      curVel = vel;
-      vel.classList.add("playing");
-      curAudio.onended = function() {
-        vel.classList.remove("playing");
+var require_app = __commonJS({
+  "src/app.js"() {
+    init_browser_index();
+    var import_matrix_encrypt_attachment = __toESM(require_browser_encrypt_attachment());
+    (function() {
+      "use strict";
+      var HS = "https://143-110-180-166.sslip.io", SN = "143-110-180-166.sslip.io";
+      var UI = window.HavenUI;
+      var g = function(id) {
+        return document.getElementById(id);
       };
-      curAudio.play();
-    } catch (e) {
-      UI.toast("Can't play audio");
-    }
-  }
-  var mediaRec = null, recChunks = [], recStart = 0;
-  async function startVoice() {
-    if (!M.current) return;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      UI.toast("Recording not supported");
-      return;
-    }
-    try {
-      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      var mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find(function(m) {
-        return window.MediaRecorder && MediaRecorder.isTypeSupported(m);
-      }) || "";
-      mediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : void 0);
-      mediaRec._stream = stream;
-      recChunks = [];
-      mediaRec.ondataavailable = function(e) {
-        if (e.data.size) recChunks.push(e.data);
+      var qs = function(s, r) {
+        return (r || document).querySelector(s);
       };
-      mediaRec.start();
-      recStart = Date.now();
-      UI.startRec();
-      UI.closeEmoji();
-    } catch (e) {
-      UI.toast("Microphone permission needed");
-    }
-  }
-  function stopVoice(cancel) {
-    if (!mediaRec) {
-      UI.stopRec();
-      return;
-    }
-    var dur = Date.now() - recStart;
-    var mime = mediaRec.mimeType || "audio/webm";
-    mediaRec.onstop = async function() {
-      if (mediaRec._stream) mediaRec._stream.getTracks().forEach(function(t) {
-        t.stop();
-      });
-      UI.stopRec();
-      mediaRec = null;
-      if (cancel || dur < 400) return;
-      try {
-        var blob = new Blob(recChunks, { type: mime });
-        UI.toast("Sending voice note\u2026");
-        var up = await uploadEncryptable(M.current, blob, mime);
-        var content = { msgtype: "m.audio", body: "Voice message", info: { mimetype: mime, size: blob.size, duration: dur }, "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": { duration: dur } };
-        if (up.file) content.file = up.file;
-        else content.url = up.url;
-        await M.client.sendMessage(M.current, content);
-      } catch (e) {
-        UI.toast("Voice failed: " + e.message);
+      function twoPane() {
+        return window.matchMedia("(min-width:720px)").matches;
       }
-    };
-    try {
-      mediaRec.stop();
-    } catch (e) {
-      UI.stopRec();
-      mediaRec = null;
-    }
-  }
-  function copyText(t) {
-    try {
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(t).catch(fb);
-      } else fb();
-    } catch (e) {
-      fb();
-    }
-    function fb() {
-      var ta = document.createElement("textarea");
-      ta.value = t;
-      ta.style.position = "absolute";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-      } catch (e) {
-      }
-      document.body.removeChild(ta);
-    }
-  }
-  function setReply(m) {
-    replyTarget = { id: m.id, name: m.name, snippet: previewText(m) };
-    UI.showReply(m.name, previewText(m));
-    var inp = g("input");
-    if (inp) inp.focus();
-  }
-  async function doSend() {
-    var inp = g("input");
-    var text = inp.value.trim();
-    if (!text || !M.current) return;
-    inp.value = "";
-    UI.refreshComposer();
-    UI.closeEmoji();
-    var rid = M.current, reply = replyTarget;
-    var c = { msgtype: "m.text", body: text };
-    if (reply) {
-      c["m.relates_to"] = { "m.in_reply_to": { event_id: reply.id } };
-      c.body = "> " + reply.name + ": " + reply.snippet + "\n\n" + text;
-    }
-    replyTarget = null;
-    UI.hideReply();
-    try {
-      await M.client.sendMessage(rid, c);
-      sendTyping(rid, false);
-    } catch (e) {
-      UI.toast("Couldn't send: " + e.message);
-      inp.value = text;
-      UI.refreshComposer();
-    }
-  }
-  function openSheetFor(rid, eid) {
-    var m = M.rooms[rid] && M.rooms[rid].evs[eid];
-    if (!m || m.deleted) return;
-    sheetCtx = { rid, eid };
-    g("actDelete").classList.toggle("hidden", m.sender !== M.userId);
-    g("actCopy").classList.toggle("hidden", m.kind !== "text");
-    UI.openSheet();
-  }
-  function resolveUid(q) {
-    q = q.replace(/^@/, "").trim();
-    if (!q) return null;
-    if (q.indexOf(":") >= 0) return "@" + q;
-    return "@" + q + ":" + SN;
-  }
-  var searchT = null;
-  async function doSearch(q) {
-    try {
-      var d = await M.client.searchUserDirectory({ term: q, limit: 6 });
-      var res = (d.results || []).filter(function(u) {
-        return u.user_id !== M.userId;
-      });
-      var box = g("addStatus");
-      if (!res.length) {
-        box.innerHTML = '<div class="empty-note" style="padding:12px">No match \u2014 you can still send to an exact @username.</div>';
-        return;
-      }
-      box.innerHTML = res.map(function(u) {
-        var nm = u.display_name || shortName(u.user_id);
-        return '<button class="srch-res" data-uid="' + esc(u.user_id) + '"><span class="av ' + gav(nm) + '">' + esc(initials(nm)) + "</span>" + esc(nm) + " <small>" + esc(shortName(u.user_id)) + "</small></button>";
-      }).join("");
-    } catch (e) {
-    }
-  }
-  async function addContact() {
-    var q = g("findUser").value.trim();
-    var note = g("addNote").value.trim();
-    var box = g("addStatus");
-    var uid = resolveUid(q);
-    if (!uid) {
-      box.textContent = "Enter a username.";
-      return;
-    }
-    box.textContent = "Sending request\u2026";
-    try {
-      var r = await M.client.createRoom({ preset: "trusted_private_chat", is_direct: true, initial_state: [{ type: "m.room.encryption", state_key: "", content: { algorithm: "m.megolm.v1.aes-sha2" } }] });
-      var iv = await fetch(HS + "/_matrix/client/v3/rooms/" + encodeURIComponent(r.room_id) + "/invite", { method: "POST", headers: { "Authorization": "Bearer " + M.client.getAccessToken(), "Content-Type": "application/json" }, body: JSON.stringify({ user_id: uid, reason: note || "Hi, it's " + M.dname + " on Haven." }) });
-      if (!iv.ok) {
-        var ivd = await iv.json().catch(function() {
-          return {};
+      var st = document.createElement("style");
+      st.textContent = ".row{animation:none!important}.rnew{animation:hvpop .32s cubic-bezier(.2,.7,.2,1)}@keyframes hvpop{from{opacity:0;transform:translateY(9px) scale(.97)}to{opacity:1;transform:none}}.empty-note{padding:28px 20px;text-align:center;color:#7c8a83;font-size:14px;line-height:1.5}.srch-res{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border-radius:12px;background:rgba(20,40,34,.05);margin-top:7px;font-size:14.5px;text-align:left;border:0;cursor:pointer;color:inherit}.srch-res small{color:#8a938c;margin-left:auto}.srch-res .av{width:30px;height:30px;font-size:12px}img.msg-img{max-width:230px;width:66vw;border-radius:12px;display:block;background:rgba(20,40,34,.06);min-height:70px;object-fit:cover}.msg .meta .tick{width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-left:2px}.row.me .meta .tick{color:rgba(238,246,242,.55)}.row.me .meta .tick.read{color:#66c6ff}.enc-banner{align-self:center;max-width:82%;text-align:center;font-size:12px;line-height:1.45;color:#5c6f66;background:rgba(230,180,90,.14);border:1px solid rgba(230,180,90,.28);border-radius:12px;padding:8px 14px;margin:6px auto 12px;display:flex;gap:7px;align-items:center;justify-content:center}.enc-banner svg{width:13px;height:13px;color:#c79a3f;flex:none}@media(prefers-reduced-motion:reduce){.rnew{animation:none}}";
+      document.head.appendChild(st);
+      function esc(s) {
+        return (s || "").replace(/[&<>"]/g, function(c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
         });
-        throw new Error(ivd.error || "couldn't reach " + shortName(uid));
       }
-      box.innerHTML = '<div class="empty-note" style="padding:12px;color:var(--sage,#2e6a60)">Request sent to ' + esc(shortName(uid)) + " \u2713</div>";
-      g("findUser").value = "";
-      g("addNote").value = "";
-    } catch (e) {
-      box.textContent = "Couldn't send: " + e.message;
-    }
-  }
-  function wmo(code) {
-    code = +code;
-    if (code === 0) return { t: "Clear", i: "w-sun" };
-    if (code === 1 || code === 2) return { t: "Partly Cloudy", i: "w-partly" };
-    if (code === 3) return { t: "Cloudy", i: "w-cloud" };
-    if (code === 45 || code === 48) return { t: "Fog", i: "w-cloud" };
-    if (code >= 51 && code <= 57) return { t: "Drizzle", i: "w-drizzle" };
-    if (code >= 61 && code <= 67 || code >= 80 && code <= 82) return { t: "Rain", i: "w-rain" };
-    if (code >= 71 && code <= 77 || code === 85 || code === 86) return { t: "Snow", i: "w-cloud" };
-    if (code >= 95) return { t: "Thunderstorm", i: "w-storm" };
-    return { t: "Cloudy", i: "w-cloud" };
-  }
-  function animateNum(el, target) {
-    var t0 = null;
-    function tick(ts) {
-      if (t0 === null) t0 = ts;
-      var pr = Math.min((ts - t0) / 800, 1);
-      el.textContent = Math.round(target * pr);
-      if (pr < 1) requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-  }
-  function renderWeather(w, place) {
-    var cur = w.current || {};
-    UI.setNight(cur.is_day === 0);
-    g("wxLoc").textContent = place || "Current location";
-    g("wxDate").textContent = (/* @__PURE__ */ new Date()).toLocaleDateString(void 0, { weekday: "long", day: "numeric", month: "long" });
-    var cd = wmo(cur.weather_code);
-    g("wxIcon").innerHTML = '<svg viewBox="0 0 64 64" width="112" height="112"><use href="#' + cd.i + '"/></svg>';
-    g("wxCond").textContent = cd.t;
-    animateNum(g("wxTempN"), Math.round(cur.temperature_2m || 0));
-    var D = w.daily || {}, dmaxA = D.temperature_2m_max || [], dminA = D.temperature_2m_min || [], dcode = D.weather_code || [], dt = D.time || [];
-    g("wxHL").innerHTML = "<span>H:<b>" + Math.round(dmaxA[0]) + '\xB0</b></span><span class="sep">\xB7</span><span>L:<b>' + Math.round(dminA[0]) + "\xB0</b></span>";
-    g("wxHum").textContent = Math.round(cur.relative_humidity_2m || 0) + "%";
-    g("wxWind").textContent = Math.round(cur.wind_speed_10m || 0) + " km/h";
-    g("wxFeel").textContent = Math.round(cur.apparent_temperature != null ? cur.apparent_temperature : cur.temperature_2m || 0) + "\xB0";
-    var H = w.hourly || {}, times = H.time || [], temps = H.temperature_2m || [], codes = H.weather_code || [];
-    var nowKey = (cur.time || "").slice(0, 13);
-    var si = times.findIndex(function(t) {
-      return t.slice(0, 13) === nowKey;
-    });
-    if (si < 0) si = 0;
-    var hh = "";
-    for (var i = 0; i < 8; i++) {
-      var idx = si + i;
-      if (idx >= times.length) break;
-      var lbl = i === 0 ? "Now" : new Date(times[idx]).toLocaleTimeString(void 0, { hour: "numeric" });
-      var c = wmo(codes[idx]);
-      hh += '<div class="wx-hour' + (i === 0 ? " now" : "") + '"><span class="h-t">' + esc(lbl) + '</span><svg><use href="#' + c.i + '"/></svg><span class="h-d">' + Math.round(temps[idx]) + '\xB0</span><span class="h-p"></span></div>';
-    }
-    g("wxHourly").innerHTML = hh;
-    var lo = Math.min.apply(null, dminA), hi = Math.max.apply(null, dmaxA), rng = hi - lo || 1;
-    var dh = "";
-    for (var j = 0; j < Math.min(5, dt.length); j++) {
-      var dn = j === 0 ? "Today" : new Date(dt[j]).toLocaleDateString(void 0, { weekday: "short" });
-      var c2 = wmo(dcode[j]);
-      var L = (dminA[j] - lo) / rng * 100, R = 100 - (dmaxA[j] - lo) / rng * 100;
-      dh += '<div class="wx-day" data-i="' + j + '"><span class="d-n">' + esc(dn) + '</span><svg><use href="#' + c2.i + '"/></svg><div class="d-bar"><i style="left:' + L.toFixed(0) + "%;right:" + R.toFixed(0) + '%"></i></div><span class="d-hl">' + Math.round(dmaxA[j]) + "\xB0 <span>" + Math.round(dminA[j]) + "\xB0</span></span></div>";
-    }
-    g("wxFc").innerHTML = dh;
-  }
-  async function fetchWeather() {
-    var coords = null, place = null;
-    try {
-      coords = await new Promise(function(res, rej) {
-        if (!navigator.geolocation) return rej();
-        navigator.geolocation.getCurrentPosition(function(p) {
-          res({ lat: p.coords.latitude, lon: p.coords.longitude });
-        }, function() {
-          rej();
-        }, { timeout: 7e3, maximumAge: 6e5 });
-      });
-    } catch (e) {
-    }
-    if (coords) {
-      try {
-        var gr = await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=" + coords.lat + "&longitude=" + coords.lon + "&localityLanguage=en");
-        var gd = await gr.json();
-        place = gd.city || gd.locality || gd.principalSubdivision || "Current location";
-      } catch (e) {
-        place = "Current location";
+      function shortName(uid) {
+        return (uid || "").split(":")[0].replace("@", "");
       }
-    }
-    if (!coords) {
-      try {
-        var ir = await fetch("https://ipapi.co/json/");
-        var id = await ir.json();
-        if (id && id.latitude) {
-          coords = { lat: id.latitude, lon: id.longitude };
-          place = id.city || id.region || "Current location";
+      function initials(s) {
+        s = (s || "?").replace(/^@/, "");
+        var p = s.trim().split(/[\s._-]+/);
+        return ((p[0] || "?")[0] + ((p[1] || "")[0] || (p[0] || "")[1] || "")).toUpperCase();
+      }
+      function gav(s) {
+        var h = 0;
+        s = s || "";
+        for (var i = 0; i < s.length; i++) h = h * 31 + s.charCodeAt(i) >>> 0;
+        return "g" + (h % 6 + 1);
+      }
+      function fmtTime(ts) {
+        return new Date(ts).toLocaleTimeString(void 0, { hour: "2-digit", minute: "2-digit" });
+      }
+      function fmtDay(ts) {
+        var d = new Date(ts), n = /* @__PURE__ */ new Date();
+        if (d.toDateString() === n.toDateString()) return "Today";
+        var y = new Date(n - 864e5);
+        if (d.toDateString() === y.toDateString()) return "Yesterday";
+        return d.toLocaleDateString(void 0, { day: "numeric", month: "short" });
+      }
+      function fmtDur(ms) {
+        if (!ms) return "0:05";
+        var s = Math.round(ms / 1e3);
+        return Math.floor(s / 60) + ":" + ("0" + s % 60).slice(-2);
+      }
+      function cleanBody(m) {
+        var b = m && m.body || "";
+        if (m && m.reply && b.indexOf("> ") === 0) {
+          var ix = b.indexOf("\n\n");
+          if (ix >= 0) b = b.slice(ix + 2);
         }
-      } catch (e) {
+        return b;
       }
-    }
-    if (!coords) {
-      UI.setWeatherAvailable(false);
-      return;
-    }
-    try {
-      var url = "https://api.open-meteo.com/v1/forecast?latitude=" + coords.lat + "&longitude=" + coords.lon + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=5";
-      var wr = await fetch(url);
-      if (!wr.ok) throw 0;
-      var w = await wr.json();
-      UI.setWeatherAvailable(true);
-      renderWeather(w, place);
-    } catch (e) {
-      UI.setWeatherAvailable(false);
-    }
-  }
-  function toVault() {
-    UI.showScreen("vault");
-    setTimeout(function() {
-      g("u").focus();
-    }, 300);
-  }
-  function longpress(el, cb) {
-    if (!el) return;
-    var t = null;
-    function s() {
-      t = setTimeout(cb, 1e3);
-    }
-    function c() {
-      if (t) {
-        clearTimeout(t);
-        t = null;
+      function previewText(m) {
+        if (!m) return "";
+        if (m.kind === "image") return "Photo";
+        if (m.kind === "audio") return "Voice message";
+        return cleanBody(m);
       }
-    }
-    el.addEventListener("mousedown", s);
-    el.addEventListener("touchstart", s, { passive: true });
-    ["mouseup", "mouseleave", "touchend", "touchcancel"].forEach(function(ev) {
-      el.addEventListener(ev, c);
-    });
-  }
-  function doLogin() {
-    var u = g("u").value.trim(), p = g("p").value;
-    if (!u || !p) {
-      g("vmsg").textContent = "Enter your name and passphrase.";
-      return;
-    }
-    var btn = g("loginBtn");
-    btn.disabled = true;
-    var old = btn.textContent;
-    btn.textContent = "Unlocking\u2026";
-    g("vmsg").textContent = "";
-    login(u, p).then(function() {
-      g("menuUser").textContent = shortName(M.userId);
-      var mu = qs(".menu-user .av");
-      if (mu) {
-        mu.className = "av " + gav(M.dname || "");
-        mu.textContent = initials(M.dname || shortName(M.userId));
+      function wave() {
+        var s = "";
+        for (var i = 0; i < 18; i++) s += '<i style="height:' + (25 + i * 41 % 70) + '%"></i>';
+        return s;
       }
-      var mn = qs(".menu-user .mu-name");
-      if (mn) mn.textContent = M.dname || "Signed in";
-      refresh();
-      UI.showScreen("app");
-      UI.showView("chats");
-      UI.closeConvo();
+      function roomEncrypted(room) {
+        try {
+          if (room.hasEncryptionStateEvent) return room.hasEncryptionStateEvent();
+        } catch (e) {
+        }
+        try {
+          return !!room.currentState.getStateEvents("m.room.encryption", "");
+        } catch (e) {
+        }
+        return false;
+      }
+      var M = { client: null, userId: null, dname: null, rooms: {}, order: [], invites: {}, current: null, _seen: {} };
+      var replyTarget = null, sheetCtx = null, blobCache = {};
+      async function login(u, p) {
+        var tmp = createClient({ baseUrl: HS });
+        var res = await tmp.login("m.login.password", { identifier: { type: "m.id.user", user: u }, password: p });
+        M.userId = res.user_id;
+        var c = createClient({ baseUrl: HS, userId: res.user_id, accessToken: res.access_token, deviceId: res.device_id });
+        M.client = c;
+        await c.initRustCrypto();
+        await c.startClient({ initialSyncLimit: 30 });
+        await new Promise(function(resolve) {
+          c.on(ClientEvent.Sync, function(s) {
+            if (s === "PREPARED") resolve();
+          });
+        });
+        try {
+          var pr = await c.getProfileInfo(res.user_id);
+          M.dname = pr.displayname || shortName(res.user_id);
+        } catch (e) {
+          M.dname = shortName(res.user_id);
+        }
+        var deb = null;
+        function bump() {
+          clearTimeout(deb);
+          deb = setTimeout(function() {
+            rebuild();
+            refresh();
+          }, 220);
+        }
+        c.on(RoomEvent.Timeline, bump);
+        c.on(MatrixEventEvent.Decrypted, bump);
+        c.on(RoomEvent.Receipt, bump);
+        c.on(RoomMemberEvent.Typing, bump);
+        c.on(RoomStateEvent.Members, bump);
+        c.on(ClientEvent.Room, bump);
+        c.on("Room.localEchoUpdated", bump);
+        c.on(RoomEvent.Redaction, bump);
+        rebuild();
+        return res;
+      }
+      function rebuild() {
+        var c = M.client;
+        if (!c) return;
+        M.rooms = {};
+        M.order = [];
+        M.invites = {};
+        c.getRooms().forEach(function(room) {
+          var mem = room.getMyMembership();
+          if (mem === "invite") {
+            buildInvite(room);
+            return;
+          }
+          if (mem !== "join") return;
+          buildJoin(room);
+        });
+      }
+      function buildInvite(room) {
+        var me = room.getMember(M.userId);
+        var mev = me && me.events && me.events.member;
+        var reason = mev ? mev.getContent().reason || null : null;
+        var from = mev ? mev.getSender() : room.getDMInviter && room.getDMInviter();
+        var fromName = from && room.getMember(from) ? room.getMember(from).name : shortName(from || "");
+        M.invites[room.roomId] = { id: room.roomId, from, fromName, note: reason, name: room.name };
+      }
+      function buildJoin(room) {
+        var rid = room.roomId;
+        M._seen[rid] = M._seen[rid] || {};
+        var r = { id: rid, name: room.name, members: {}, evs: {}, order: [], reacts: {}, receipts: {}, seen: M._seen[rid], last: 0, typing: [], dm: false, other: null, display: room.name || "Chat", encrypted: roomEncrypted(room) };
+        var joined = room.getJoinedMembers();
+        joined.forEach(function(mm) {
+          r.members[mm.userId] = mm.name || shortName(mm.userId);
+        });
+        var others = joined.filter(function(mm) {
+          return mm.userId !== M.userId;
+        });
+        r.dm = others.length === 1;
+        r.other = others.length ? others[0].userId : null;
+        r.display = room.name || others.map(function(o) {
+          return o.name || shortName(o.userId);
+        }).join(", ") || "Chat";
+        r.typing = room.getMembers().filter(function(mm) {
+          return mm.typing && mm.userId !== M.userId;
+        }).map(function(mm) {
+          return mm.name || shortName(mm.userId);
+        });
+        room.getLiveTimeline().getEvents().forEach(function(ev) {
+          ingestEvent(r, ev);
+        });
+        Object.keys(r.members).forEach(function(u) {
+          if (u === M.userId) return;
+          try {
+            var eid = room.getEventReadUpTo(u, false);
+            if (eid) r.receipts[u] = { eid };
+          } catch (e) {
+          }
+        });
+        var evs = room.getLiveTimeline().getEvents();
+        r.last = evs.length ? evs[evs.length - 1].getTs() : 0;
+        M.rooms[rid] = r;
+        M.order.push(rid);
+      }
+      function ingestEvent(r, ev) {
+        var type = ev.getType();
+        if (type === "m.reaction") {
+          var rel = ev.getContent()["m.relates_to"];
+          if (!rel || rel.rel_type !== "m.annotation") return;
+          var tgt = rel.event_id, key = rel.key;
+          var mm = r.reacts[tgt] || (r.reacts[tgt] = {});
+          var e = mm[key] || (mm[key] = { count: 0, mine: false, mineEv: null });
+          e.count++;
+          if (ev.getSender() === M.userId) {
+            e.mine = true;
+            e.mineEv = ev.getId();
+          }
+          return;
+        }
+        if (type === "m.room.message") {
+          var eid = ev.getId();
+          if (r.evs[eid]) return;
+          var c = ev.getContent(), kind = "text", mxc = null, file = null;
+          if (c.msgtype === "m.image") {
+            kind = "image";
+            mxc = c.url;
+            file = c.file;
+          } else if (c.msgtype === "m.audio") {
+            kind = "audio";
+            mxc = c.url;
+            file = c.file;
+          }
+          var reply = c["m.relates_to"] && c["m.relates_to"]["m.in_reply_to"] && c["m.relates_to"]["m.in_reply_to"].event_id || null;
+          var msg = { id: eid, kind, sender: ev.getSender(), name: r.members[ev.getSender()] || shortName(ev.getSender()), body: c.body || "", ts: ev.getTs() || Date.now(), mxc, file, info: c.info || {}, reply, deleted: ev.isRedacted(), status: ev.status };
+          r.evs[eid] = msg;
+          r.order.push(eid);
+        }
+      }
+      async function mediaURL(msg) {
+        var mxc = msg.file ? msg.file.url : msg.mxc;
+        if (!mxc) return null;
+        if (blobCache[mxc]) return blobCache[mxc];
+        var m = mxc.replace("mxc://", "").split("/");
+        var r = await fetch(HS + "/_matrix/client/v1/media/download/" + m[0] + "/" + m[1], { headers: { Authorization: "Bearer " + M.client.getAccessToken() } });
+        if (!r.ok) throw new Error("media " + r.status);
+        var buf = await r.arrayBuffer();
+        var data = msg.file ? await (0, import_matrix_encrypt_attachment.decryptAttachment)(buf, msg.file) : buf;
+        var blob = new Blob([data], { type: msg.info && msg.info.mimetype || "application/octet-stream" });
+        var u = URL.createObjectURL(blob);
+        blobCache[mxc] = u;
+        return u;
+      }
+      async function uploadEncryptable(rid, blob, mimetype) {
+        var room = M.client.getRoom(rid), enc = room && roomEncrypted(room);
+        if (enc) {
+          var res = await (0, import_matrix_encrypt_attachment.encryptAttachment)(await blob.arrayBuffer());
+          var up = await M.client.uploadContent(new Blob([res.data]), { type: "application/octet-stream", includeFilename: false });
+          var fileInfo = res.info;
+          fileInfo.url = up.content_uri;
+          fileInfo.mimetype = mimetype;
+          return { file: fileInfo, url: null };
+        } else {
+          var up2 = await M.client.uploadContent(blob, { type: mimetype });
+          return { file: null, url: up2.content_uri };
+        }
+      }
+      async function react(rid, tgt, key) {
+        var r = M.rooms[rid];
+        if (!r) return;
+        var rc = r.reacts[tgt] || {};
+        var ex = rc[key];
+        if (ex && ex.mine && ex.mineEv) {
+          try {
+            await M.client.redactEvent(rid, ex.mineEv);
+          } catch (e) {
+          }
+        } else {
+          var mine = Object.keys(rc).filter(function(k) {
+            return rc[k].mine;
+          });
+          if (mine.length >= 2) {
+            UI.toast("Up to 2 reactions per message");
+            return;
+          }
+          try {
+            await M.client.sendEvent(rid, "m.reaction", { "m.relates_to": { rel_type: "m.annotation", event_id: tgt, key } });
+          } catch (e) {
+            UI.toast("Reaction failed");
+          }
+        }
+      }
+      async function redactMsg(rid, eid) {
+        try {
+          await M.client.redactEvent(rid, eid);
+        } catch (e) {
+          UI.toast("Delete failed");
+        }
+      }
+      var typingSent = 0;
+      function sendTyping(rid, on) {
+        var now = Date.now();
+        if (on && now - typingSent < 3500) return;
+        typingSent = on ? now : 0;
+        try {
+          M.client.sendTyping(rid, on, 5e3);
+        } catch (e) {
+        }
+      }
+      function markRead(rid) {
+        var room = M.client.getRoom(rid);
+        if (!room) return;
+        var evs = room.getLiveTimeline().getEvents();
+        var last = null;
+        for (var i = evs.length - 1; i >= 0; i--) {
+          var ev = evs[i];
+          var id = ev.getId && ev.getId();
+          if (!ev.status && id && id.indexOf("~") !== 0) {
+            last = ev;
+            break;
+          }
+        }
+        if (!last) return;
+        if (room._readSentId === last.getId()) return;
+        room._readSentId = last.getId();
+        try {
+          M.client.sendReadReceipt(last);
+        } catch (e) {
+        }
+      }
+      function ticks(r, m) {
+        if (m.status) return "sent";
+        var others = Object.keys(r.members).filter(function(u) {
+          return u !== M.userId && r.members[u];
+        });
+        if (!others.length) return "delivered";
+        var mi = r.order.indexOf(m.id);
+        if (mi < 0) return "delivered";
+        var all = others.every(function(u) {
+          var rc = r.receipts[u];
+          if (!rc) return false;
+          var ri = r.order.indexOf(rc.eid);
+          return ri >= 0 && ri >= mi;
+        });
+        return all ? "read" : "delivered";
+      }
+      function tickSvg(state) {
+        if (state === "sent") return ' <svg class="tick"><use href="#i-check"/></svg>';
+        if (state === "read") return ' <svg class="tick read"><use href="#i-checks"/></svg>';
+        return ' <svg class="tick"><use href="#i-checks"/></svg>';
+      }
+      function refresh() {
+        renderChats();
+        renderContacts();
+        renderRequests();
+        if (M.current) renderConvo(M.current);
+      }
+      function scrollConvo() {
+        var el = g("convo");
+        if (el) el.scrollTop = el.scrollHeight;
+      }
+      function renderChats() {
+        var list = g("chatList");
+        var ids = M.order.filter(function(id) {
+          return M.rooms[id];
+        }).sort(function(a, b) {
+          return (M.rooms[b].last || 0) - (M.rooms[a].last || 0);
+        });
+        var sig = ids.map(function(id) {
+          var r = M.rooms[id];
+          return id + (r.last || 0) + (r.typing.length ? "t" : "") + r.order.length;
+        }).join("|");
+        if (list._sig === sig) return;
+        list._sig = sig;
+        if (!ids.length) {
+          list.innerHTML = '<div class="empty-note">No chats yet.<br>Add someone from the Contacts tab to start.</div>';
+          return;
+        }
+        list.innerHTML = ids.map(function(rid) {
+          var r = M.rooms[rid];
+          var last = r.order.length ? r.evs[r.order[r.order.length - 1]] : null;
+          var prev = r.typing.length ? '<span class="chat-prev" style="color:var(--sage,#2e6a60);font-weight:600">typing\u2026</span>' : '<span class="chat-prev">' + (last ? esc((last.sender === M.userId ? "You: " : "") + previewText(last)) : "Tap to open") + "</span>";
+          return '<div class="chat ripple' + (rid === M.current ? " active" : "") + '" data-id="' + esc(rid) + '"><div class="av ' + gav(r.display) + '">' + esc(initials(r.display)) + '</div><div class="chat-body"><div class="chat-top"><span class="chat-name">' + esc(r.display) + '</span><span class="chat-time">' + (r.last ? fmtTime(r.last) : "") + '</span></div><div class="chat-bot">' + prev + "</div></div></div>";
+        }).join("");
+      }
+      function convoSig(r) {
+        var rk = Object.keys(r.reacts).map(function(k) {
+          return k + Object.keys(r.reacts[k]).map(function(e) {
+            return e + r.reacts[k][e].count + (r.reacts[k][e].mine ? "m" : "");
+          }).join();
+        }).join();
+        var rcp = Object.keys(r.receipts).map(function(u) {
+          return u + (r.receipts[u].eid || "");
+        }).join();
+        var stt = r.order.map(function(e) {
+          return r.evs[e].status || "";
+        }).join("");
+        return r.order.length + "|" + (r.order[r.order.length - 1] || "") + "|" + rk + "|" + r.typing.join() + "|" + r.order.filter(function(e) {
+          return r.evs[e].deleted;
+        }).length + "|" + rcp + "|" + stt;
+      }
+      function renderConvo(rid, force) {
+        var r = M.rooms[rid];
+        if (!r) return;
+        var el = g("convo");
+        var sig = convoSig(r);
+        if (!force && r._sig === sig) return;
+        r._sig = sig;
+        var h = "", lastDay = "";
+        if (r.encrypted) h += '<div class="enc-banner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg> Messages here are end-to-end encrypted. Not even the server can read them.</div>';
+        r.order.forEach(function(eid) {
+          var m = r.evs[eid];
+          if (!m) return;
+          var day = fmtDay(m.ts);
+          if (day !== lastDay) {
+            h += '<div class="daysep">' + day + "</div>";
+            lastDay = day;
+          }
+          var me = m.sender === M.userId;
+          var isNew = !r.seen[eid];
+          h += '<div class="row ' + (me ? "me" : "them") + (isNew ? " rnew" : "") + '" data-eid="' + esc(eid) + '"><div class="msg" data-eid="' + esc(eid) + '">';
+          if (m.deleted) {
+            h += '<span class="txt" style="opacity:.55;font-style:italic">Deleted</span>';
+          } else {
+            if (!me && !r.dm) h += '<span class="q-name" style="display:block;font-size:12px;font-weight:700;color:var(--sage,#2e6a60);margin-bottom:2px">' + esc(m.name) + "</span>";
+            if (m.reply) {
+              var t = r.evs[m.reply];
+              h += '<span class="quote"><span class="q-name">' + esc(t ? t.name : "\u2026") + '</span><span class="q-body">' + esc(t ? previewText(t) : "message") + "</span></span>";
+            }
+            if (m.kind === "image") {
+              h += '<img class="msg-img" data-eid="' + esc(eid) + '" alt="photo">';
+            } else if (m.kind === "audio") {
+              h += '<div class="voice" data-eid="' + esc(eid) + '"><button class="vplay" aria-label="Play"><svg class="ic-play"><use href="#i-play"/></svg><svg class="ic-pause"><use href="#i-pause"/></svg></button><div class="vwave">' + wave() + '</div><span class="v-dur">' + fmtDur(m.info && m.info.duration) + "</span></div>";
+            } else {
+              h += '<span class="txt">' + esc(cleanBody(m)) + "</span>";
+            }
+          }
+          h += '<span class="meta">' + fmtTime(m.ts) + (me && !m.deleted ? tickSvg(ticks(r, m)) : "") + "</span></div>";
+          var rc = r.reacts[eid];
+          if (rc) {
+            var ks = Object.keys(rc);
+            if (ks.length) h += '<div class="reacts" style="' + (me ? "justify-content:flex-end" : "justify-content:flex-start") + '">' + ks.map(function(k) {
+              return '<span class="react' + (rc[k].mine ? " mine" : "") + '" data-eid="' + esc(eid) + '" data-key="' + esc(k) + '"><span class="r-em">' + k + "</span>" + rc[k].count + "</span>";
+            }).join("") + "</div>";
+          }
+          h += "</div>";
+        });
+        if (r.typing.length) h += '<div class="typing"><i></i><i></i><i></i></div>';
+        el.innerHTML = h || '<div class="daysep">Say hello</div>';
+        r.order.forEach(function(x) {
+          r.seen[x] = 1;
+        });
+        el.querySelectorAll("img.msg-img").forEach(function(img) {
+          var m = r.evs[img.getAttribute("data-eid")];
+          if (m) mediaURL(m).then(function(u) {
+            img.src = u;
+            scrollConvo();
+          }).catch(function() {
+          });
+        });
+        scrollConvo();
+        var sub = g("convoSub");
+        if (sub) sub.innerHTML = r.typing.length ? '<span class="dot"></span>typing\u2026' : '<span class="dot"></span>online';
+        if (rid === M.current) markRead(rid);
+      }
+      function renderContacts() {
+        var list = g("contactList");
+        if (!list) return;
+        var seen = {}, items = [];
+        M.order.forEach(function(rid) {
+          var r = M.rooms[rid];
+          if (r.dm && r.other && !seen[r.other]) {
+            seen[r.other] = 1;
+            items.push({ user: r.other, name: r.members[r.other] || shortName(r.other), rid });
+          }
+        });
+        var sig = items.map(function(i) {
+          return i.user;
+        }).join("|");
+        if (list._sig === sig) return;
+        list._sig = sig;
+        if (!items.length) {
+          list.innerHTML = '<div class="empty-note">No contacts yet.<br>Find someone by @username above.</div>';
+          return;
+        }
+        list.innerHTML = items.map(function(it) {
+          return '<div class="contact ripple" data-rid="' + esc(it.rid) + '"><div class="av ' + gav(it.name) + '">' + esc(initials(it.name)) + '</div><div class="contact-body"><div class="contact-name">' + esc(it.name) + '</div><div class="contact-sub">' + esc(shortName(it.user)) + '</div></div><div class="contact-act"><svg><use href="#i-chat"/></svg></div></div>';
+        }).join("");
+      }
+      function renderRequests() {
+        var list = g("requestList");
+        if (!list) return;
+        var ids = Object.keys(M.invites);
+        UI.setReqBadge(ids.length);
+        var sig = ids.join("|");
+        if (list._sig === sig) return;
+        list._sig = sig;
+        if (!ids.length) {
+          list.innerHTML = '<div class="empty-note">No pending requests.</div>';
+          return;
+        }
+        list.innerHTML = ids.map(function(rid) {
+          var q = M.invites[rid];
+          var nm = q.fromName || shortName(q.from || "");
+          return '<div class="req" data-id="' + esc(rid) + '"><div class="req-head"><div class="av ' + gav(nm) + '">' + esc(initials(nm)) + '</div><div class="req-meta"><div class="req-name">' + esc(nm) + '</div><div class="req-user">' + esc(shortName(q.from || "")) + '</div></div></div><div class="req-note">' + esc(q.note || "Wants to connect on Haven.") + '</div><div class="req-actions"><button class="req-accept ripple" data-id="' + esc(rid) + '"><svg><use href="#i-check"/></svg>Accept</button><button class="req-decline ripple" data-id="' + esc(rid) + '"><svg><use href="#i-x"/></svg>Decline</button></div></div>';
+        }).join("");
+      }
+      function openChat(rid) {
+        M.current = rid;
+        var r = M.rooms[rid];
+        if (!r) return;
+        g("convoName").textContent = r.display;
+        var hav = qs(".convo-head .av");
+        if (hav) {
+          hav.className = "av " + gav(r.display);
+          hav.textContent = initials(r.display);
+        }
+        var sub = g("convoSub");
+        if (sub) sub.innerHTML = '<span class="dot"></span>' + (r.typing.length ? "typing\u2026" : "online");
+        renderConvo(rid, true);
+        renderChats();
+        UI.openConvo();
+        setTimeout(function() {
+          var inp = g("input");
+          if (inp) inp.focus();
+        }, 60);
+      }
+      var curAudio = null, curVel = null;
+      async function playVoice(vel) {
+        try {
+          if (curVel === vel && curAudio && !curAudio.paused) {
+            curAudio.pause();
+            vel.classList.remove("playing");
+            return;
+          }
+          if (curAudio) {
+            curAudio.pause();
+          }
+          if (curVel) curVel.classList.remove("playing");
+          var m = M.rooms[M.current].evs[vel.getAttribute("data-eid")];
+          var u = await mediaURL(m);
+          curAudio = new Audio(u);
+          curVel = vel;
+          vel.classList.add("playing");
+          curAudio.onended = function() {
+            vel.classList.remove("playing");
+          };
+          curAudio.play();
+        } catch (e) {
+          UI.toast("Can't play audio");
+        }
+      }
+      var mediaRec = null, recChunks = [], recStart = 0;
+      async function startVoice() {
+        if (!M.current) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          UI.toast("Recording not supported");
+          return;
+        }
+        try {
+          var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          var mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find(function(m) {
+            return window.MediaRecorder && MediaRecorder.isTypeSupported(m);
+          }) || "";
+          mediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : void 0);
+          mediaRec._stream = stream;
+          recChunks = [];
+          mediaRec.ondataavailable = function(e) {
+            if (e.data.size) recChunks.push(e.data);
+          };
+          mediaRec.start();
+          recStart = Date.now();
+          UI.startRec();
+          UI.closeEmoji();
+        } catch (e) {
+          UI.toast("Microphone permission needed");
+        }
+      }
+      function stopVoice(cancel) {
+        if (!mediaRec) {
+          UI.stopRec();
+          return;
+        }
+        var dur = Date.now() - recStart;
+        var mime = mediaRec.mimeType || "audio/webm";
+        mediaRec.onstop = async function() {
+          if (mediaRec._stream) mediaRec._stream.getTracks().forEach(function(t) {
+            t.stop();
+          });
+          UI.stopRec();
+          mediaRec = null;
+          if (cancel || dur < 400) return;
+          try {
+            var blob = new Blob(recChunks, { type: mime });
+            UI.toast("Sending voice note\u2026");
+            var up = await uploadEncryptable(M.current, blob, mime);
+            var content = { msgtype: "m.audio", body: "Voice message", info: { mimetype: mime, size: blob.size, duration: dur }, "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": { duration: dur } };
+            if (up.file) content.file = up.file;
+            else content.url = up.url;
+            await M.client.sendMessage(M.current, content);
+          } catch (e) {
+            UI.toast("Voice failed: " + e.message);
+          }
+        };
+        try {
+          mediaRec.stop();
+        } catch (e) {
+          UI.stopRec();
+          mediaRec = null;
+        }
+      }
+      function copyText(t) {
+        try {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(t).catch(fb);
+          } else fb();
+        } catch (e) {
+          fb();
+        }
+        function fb() {
+          var ta = document.createElement("textarea");
+          ta.value = t;
+          ta.style.position = "absolute";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand("copy");
+          } catch (e) {
+          }
+          document.body.removeChild(ta);
+        }
+      }
+      function setReply(m) {
+        replyTarget = { id: m.id, name: m.name, snippet: previewText(m) };
+        UI.showReply(m.name, previewText(m));
+        var inp = g("input");
+        if (inp) inp.focus();
+      }
+      async function doSend() {
+        var inp = g("input");
+        var text = inp.value.trim();
+        if (!text || !M.current) return;
+        inp.value = "";
+        UI.refreshComposer();
+        UI.closeEmoji();
+        var rid = M.current, reply = replyTarget;
+        var c = { msgtype: "m.text", body: text };
+        if (reply) {
+          c["m.relates_to"] = { "m.in_reply_to": { event_id: reply.id } };
+          c.body = "> " + reply.name + ": " + reply.snippet + "\n\n" + text;
+        }
+        replyTarget = null;
+        UI.hideReply();
+        try {
+          await M.client.sendMessage(rid, c);
+          sendTyping(rid, false);
+        } catch (e) {
+          UI.toast("Couldn't send: " + e.message);
+          inp.value = text;
+          UI.refreshComposer();
+        }
+      }
+      function openSheetFor(rid, eid) {
+        var m = M.rooms[rid] && M.rooms[rid].evs[eid];
+        if (!m || m.deleted) return;
+        sheetCtx = { rid, eid };
+        g("actDelete").classList.toggle("hidden", m.sender !== M.userId);
+        g("actCopy").classList.toggle("hidden", m.kind !== "text");
+        UI.openSheet();
+      }
+      function resolveUid(q) {
+        q = q.replace(/^@/, "").trim();
+        if (!q) return null;
+        if (q.indexOf(":") >= 0) return "@" + q;
+        return "@" + q + ":" + SN;
+      }
+      var searchT = null;
+      async function doSearch(q) {
+        try {
+          var d = await M.client.searchUserDirectory({ term: q, limit: 6 });
+          var res = (d.results || []).filter(function(u) {
+            return u.user_id !== M.userId;
+          });
+          var box = g("addStatus");
+          if (!res.length) {
+            box.innerHTML = '<div class="empty-note" style="padding:12px">No match \u2014 you can still send to an exact @username.</div>';
+            return;
+          }
+          box.innerHTML = res.map(function(u) {
+            var nm = u.display_name || shortName(u.user_id);
+            return '<button class="srch-res" data-uid="' + esc(u.user_id) + '"><span class="av ' + gav(nm) + '">' + esc(initials(nm)) + "</span>" + esc(nm) + " <small>" + esc(shortName(u.user_id)) + "</small></button>";
+          }).join("");
+        } catch (e) {
+        }
+      }
+      async function addContact() {
+        var q = g("findUser").value.trim();
+        var note = g("addNote").value.trim();
+        var box = g("addStatus");
+        var uid = resolveUid(q);
+        if (!uid) {
+          box.textContent = "Enter a username.";
+          return;
+        }
+        box.textContent = "Sending request\u2026";
+        try {
+          var r = await M.client.createRoom({ preset: "trusted_private_chat", is_direct: true, initial_state: [{ type: "m.room.encryption", state_key: "", content: { algorithm: "m.megolm.v1.aes-sha2" } }] });
+          var iv = await fetch(HS + "/_matrix/client/v3/rooms/" + encodeURIComponent(r.room_id) + "/invite", { method: "POST", headers: { "Authorization": "Bearer " + M.client.getAccessToken(), "Content-Type": "application/json" }, body: JSON.stringify({ user_id: uid, reason: note || "Hi, it's " + M.dname + " on Haven." }) });
+          if (!iv.ok) {
+            var ivd = await iv.json().catch(function() {
+              return {};
+            });
+            throw new Error(ivd.error || "couldn't reach " + shortName(uid));
+          }
+          box.innerHTML = '<div class="empty-note" style="padding:12px;color:var(--sage,#2e6a60)">Request sent to ' + esc(shortName(uid)) + " \u2713</div>";
+          g("findUser").value = "";
+          g("addNote").value = "";
+        } catch (e) {
+          box.textContent = "Couldn't send: " + e.message;
+        }
+      }
+      function wmo(code) {
+        code = +code;
+        if (code === 0) return { t: "Clear", i: "w-sun" };
+        if (code === 1 || code === 2) return { t: "Partly Cloudy", i: "w-partly" };
+        if (code === 3) return { t: "Cloudy", i: "w-cloud" };
+        if (code === 45 || code === 48) return { t: "Fog", i: "w-cloud" };
+        if (code >= 51 && code <= 57) return { t: "Drizzle", i: "w-drizzle" };
+        if (code >= 61 && code <= 67 || code >= 80 && code <= 82) return { t: "Rain", i: "w-rain" };
+        if (code >= 71 && code <= 77 || code === 85 || code === 86) return { t: "Snow", i: "w-cloud" };
+        if (code >= 95) return { t: "Thunderstorm", i: "w-storm" };
+        return { t: "Cloudy", i: "w-cloud" };
+      }
+      function animateNum(el, target) {
+        var t0 = null;
+        function tick(ts) {
+          if (t0 === null) t0 = ts;
+          var pr = Math.min((ts - t0) / 800, 1);
+          el.textContent = Math.round(target * pr);
+          if (pr < 1) requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      }
+      function renderWeather(w, place) {
+        var cur = w.current || {};
+        UI.setNight(cur.is_day === 0);
+        g("wxLoc").textContent = place || "Current location";
+        g("wxDate").textContent = (/* @__PURE__ */ new Date()).toLocaleDateString(void 0, { weekday: "long", day: "numeric", month: "long" });
+        var cd = wmo(cur.weather_code);
+        g("wxIcon").innerHTML = '<svg viewBox="0 0 64 64" width="112" height="112"><use href="#' + cd.i + '"/></svg>';
+        g("wxCond").textContent = cd.t;
+        animateNum(g("wxTempN"), Math.round(cur.temperature_2m || 0));
+        var D = w.daily || {}, dmaxA = D.temperature_2m_max || [], dminA = D.temperature_2m_min || [], dcode = D.weather_code || [], dt = D.time || [];
+        g("wxHL").innerHTML = "<span>H:<b>" + Math.round(dmaxA[0]) + '\xB0</b></span><span class="sep">\xB7</span><span>L:<b>' + Math.round(dminA[0]) + "\xB0</b></span>";
+        g("wxHum").textContent = Math.round(cur.relative_humidity_2m || 0) + "%";
+        g("wxWind").textContent = Math.round(cur.wind_speed_10m || 0) + " km/h";
+        g("wxFeel").textContent = Math.round(cur.apparent_temperature != null ? cur.apparent_temperature : cur.temperature_2m || 0) + "\xB0";
+        var H = w.hourly || {}, times = H.time || [], temps = H.temperature_2m || [], codes = H.weather_code || [];
+        var nowKey = (cur.time || "").slice(0, 13);
+        var si = times.findIndex(function(t) {
+          return t.slice(0, 13) === nowKey;
+        });
+        if (si < 0) si = 0;
+        var hh = "";
+        for (var i = 0; i < 8; i++) {
+          var idx = si + i;
+          if (idx >= times.length) break;
+          var lbl = i === 0 ? "Now" : new Date(times[idx]).toLocaleTimeString(void 0, { hour: "numeric" });
+          var c = wmo(codes[idx]);
+          hh += '<div class="wx-hour' + (i === 0 ? " now" : "") + '"><span class="h-t">' + esc(lbl) + '</span><svg><use href="#' + c.i + '"/></svg><span class="h-d">' + Math.round(temps[idx]) + '\xB0</span><span class="h-p"></span></div>';
+        }
+        g("wxHourly").innerHTML = hh;
+        var lo = Math.min.apply(null, dminA), hi = Math.max.apply(null, dmaxA), rng = hi - lo || 1;
+        var dh = "";
+        for (var j = 0; j < Math.min(5, dt.length); j++) {
+          var dn = j === 0 ? "Today" : new Date(dt[j]).toLocaleDateString(void 0, { weekday: "short" });
+          var c2 = wmo(dcode[j]);
+          var L = (dminA[j] - lo) / rng * 100, R = 100 - (dmaxA[j] - lo) / rng * 100;
+          dh += '<div class="wx-day" data-i="' + j + '"><span class="d-n">' + esc(dn) + '</span><svg><use href="#' + c2.i + '"/></svg><div class="d-bar"><i style="left:' + L.toFixed(0) + "%;right:" + R.toFixed(0) + '%"></i></div><span class="d-hl">' + Math.round(dmaxA[j]) + "\xB0 <span>" + Math.round(dminA[j]) + "\xB0</span></span></div>";
+        }
+        g("wxFc").innerHTML = dh;
+      }
+      async function fetchWeather() {
+        var coords = null, place = null;
+        try {
+          coords = await new Promise(function(res, rej) {
+            if (!navigator.geolocation) return rej();
+            navigator.geolocation.getCurrentPosition(function(p) {
+              res({ lat: p.coords.latitude, lon: p.coords.longitude });
+            }, function() {
+              rej();
+            }, { timeout: 7e3, maximumAge: 6e5 });
+          });
+        } catch (e) {
+        }
+        if (coords) {
+          try {
+            var gr = await fetch("https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=" + coords.lat + "&longitude=" + coords.lon + "&localityLanguage=en");
+            var gd = await gr.json();
+            place = gd.city || gd.locality || gd.principalSubdivision || "Current location";
+          } catch (e) {
+            place = "Current location";
+          }
+        }
+        if (!coords) {
+          try {
+            var ir = await fetch("https://ipapi.co/json/");
+            var id = await ir.json();
+            if (id && id.latitude) {
+              coords = { lat: id.latitude, lon: id.longitude };
+              place = id.city || id.region || "Current location";
+            }
+          } catch (e) {
+          }
+        }
+        if (!coords) {
+          UI.setWeatherAvailable(false);
+          return;
+        }
+        try {
+          var url = "https://api.open-meteo.com/v1/forecast?latitude=" + coords.lat + "&longitude=" + coords.lon + "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=5";
+          var wr = await fetch(url);
+          if (!wr.ok) throw 0;
+          var w = await wr.json();
+          UI.setWeatherAvailable(true);
+          renderWeather(w, place);
+        } catch (e) {
+          UI.setWeatherAvailable(false);
+        }
+      }
+      function toVault() {
+        UI.showScreen("vault");
+        setTimeout(function() {
+          g("u").focus();
+        }, 300);
+      }
+      function longpress(el, cb) {
+        if (!el) return;
+        var t = null;
+        function s() {
+          t = setTimeout(cb, 1e3);
+        }
+        function c() {
+          if (t) {
+            clearTimeout(t);
+            t = null;
+          }
+        }
+        el.addEventListener("mousedown", s);
+        el.addEventListener("touchstart", s, { passive: true });
+        ["mouseup", "mouseleave", "touchend", "touchcancel"].forEach(function(ev) {
+          el.addEventListener(ev, c);
+        });
+      }
+      function doLogin() {
+        var u = g("u").value.trim(), p = g("p").value;
+        if (!u || !p) {
+          g("vmsg").textContent = "Enter your name and passphrase.";
+          return;
+        }
+        var btn = g("loginBtn");
+        btn.disabled = true;
+        var old = btn.textContent;
+        btn.textContent = "Unlocking\u2026";
+        g("vmsg").textContent = "";
+        login(u, p).then(function() {
+          g("menuUser").textContent = shortName(M.userId);
+          var mu = qs(".menu-user .av");
+          if (mu) {
+            mu.className = "av " + gav(M.dname || "");
+            mu.textContent = initials(M.dname || shortName(M.userId));
+          }
+          var mn = qs(".menu-user .mu-name");
+          if (mn) mn.textContent = M.dname || "Signed in";
+          refresh();
+          UI.showScreen("app");
+          UI.showView("chats");
+          UI.closeConvo();
+          g("convo").innerHTML = "";
+          g("convoName").textContent = "";
+          var _cs = g("convoSub");
+          if (_cs) _cs.innerHTML = "";
+          if (twoPane()) {
+            var first = M.order.slice().sort(function(a, b) {
+              return (M.rooms[b].last || 0) - (M.rooms[a].last || 0);
+            })[0];
+            if (first) openChat(first);
+          }
+          g("u").value = "";
+          g("p").value = "";
+        }).catch(function(err) {
+          g("vmsg").textContent = /M_FORBIDDEN|403|Invalid|Unknown|not found/i.test(err.message || "") ? "That name or passphrase isn't right." : "Couldn't connect: " + (err.message || err);
+        }).then(function() {
+          btn.disabled = false;
+          btn.textContent = old;
+        });
+      }
+      g("loginForm").addEventListener("submit", function(e) {
+        e.preventDefault();
+        doLogin();
+      });
+      g("loginBtn").addEventListener("click", function(e) {
+        e.preventDefault();
+        doLogin();
+      });
+      g("sendBtn").addEventListener("click", function(e) {
+        e.preventDefault();
+        doSend();
+      });
+      g("input").addEventListener("keydown", function(e) {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          doSend();
+        }
+      });
+      g("input").addEventListener("input", function() {
+        if (M.current && this.value.trim()) sendTyping(M.current, true);
+      });
+      g("micBtn").addEventListener("click", startVoice);
+      g("recCancel").addEventListener("click", function() {
+        stopVoice(true);
+      });
+      g("recSend").addEventListener("click", function() {
+        stopVoice(false);
+      });
+      g("fileInput").addEventListener("change", function() {
+        var f = this.files[0];
+        this.value = "";
+        if (!f || !M.current) return;
+        UI.toast("Sending photo\u2026");
+        var dim;
+        (function() {
+          return new Promise(function(res) {
+            var u = URL.createObjectURL(f);
+            var i = new Image();
+            i.onload = function() {
+              dim = { w: i.naturalWidth, h: i.naturalHeight };
+              URL.revokeObjectURL(u);
+              res();
+            };
+            i.onerror = function() {
+              dim = { w: 0, h: 0 };
+              res();
+            };
+            i.src = u;
+          });
+        })().then(function() {
+          return uploadEncryptable(M.current, f, f.type);
+        }).then(function(up) {
+          var content = { msgtype: "m.image", body: f.name || "photo.jpg", info: { mimetype: f.type, size: f.size, w: dim.w, h: dim.h } };
+          if (up.file) content.file = up.file;
+          else content.url = up.url;
+          return M.client.sendMessage(M.current, content);
+        }).catch(function(e) {
+          UI.toast("Photo failed: " + e.message);
+        });
+      });
+      g("replyClose").addEventListener("click", function() {
+        replyTarget = null;
+      });
+      g("convo").addEventListener("click", function(e) {
+        var reactEl = e.target.closest(".react");
+        if (reactEl) {
+          e.stopPropagation();
+          react(M.current, reactEl.getAttribute("data-eid"), reactEl.getAttribute("data-key"));
+          return;
+        }
+        var play = e.target.closest(".vplay");
+        if (play) {
+          e.stopPropagation();
+          playVoice(play.closest(".voice"));
+          return;
+        }
+        var msg = e.target.closest(".msg");
+        if (msg) {
+          openSheetFor(M.current, msg.getAttribute("data-eid"));
+        }
+      });
+      g("actReply").addEventListener("click", function() {
+        if (!sheetCtx) return;
+        var m = M.rooms[sheetCtx.rid].evs[sheetCtx.eid];
+        setReply(m);
+        if (window.__havenCloseSheet) window.__havenCloseSheet();
+      });
+      g("actCopy").addEventListener("click", function() {
+        if (!sheetCtx) return;
+        var m = M.rooms[sheetCtx.rid].evs[sheetCtx.eid];
+        copyText(cleanBody(m));
+        UI.toast("Copied");
+        if (window.__havenCloseSheet) window.__havenCloseSheet();
+      });
+      g("actDelete").addEventListener("click", function() {
+        if (!sheetCtx) return;
+        redactMsg(sheetCtx.rid, sheetCtx.eid);
+        if (window.__havenCloseSheet) window.__havenCloseSheet();
+      });
+      g("quickReacts").addEventListener("click", function(e) {
+        var b = e.target.closest("button");
+        if (!b || !sheetCtx) return;
+        if (b.classList.contains("qr-more")) return;
+        var em = (b.textContent || "").trim();
+        if (!em) return;
+        react(sheetCtx.rid, sheetCtx.eid, em);
+        if (window.__havenCloseSheet) window.__havenCloseSheet();
+      });
+      g("chatList").addEventListener("click", function(e) {
+        var c = e.target.closest(".chat");
+        if (c) openChat(c.getAttribute("data-id"));
+      });
+      g("contactList").addEventListener("click", function(e) {
+        var c = e.target.closest(".contact");
+        if (c) {
+          openChat(c.getAttribute("data-rid"));
+          UI.showView("chats");
+        }
+      });
+      g("requestList").addEventListener("click", function(e) {
+        var acc = e.target.closest(".req-accept"), dec = e.target.closest(".req-decline");
+        if (acc) {
+          var rid = acc.getAttribute("data-id");
+          acc.textContent = "\u2026";
+          M.client.joinRoom(rid).then(function() {
+            UI.showView("chats");
+            UI.toast("Request accepted");
+          }).catch(function() {
+            UI.toast("Couldn't accept");
+          });
+        } else if (dec) {
+          var rid2 = dec.getAttribute("data-id");
+          M.client.leave(rid2).then(function() {
+            UI.toast("Request declined");
+          }).catch(function() {
+          });
+        }
+      });
+      g("addBtn").addEventListener("click", addContact);
+      g("findUser").addEventListener("input", function() {
+        clearTimeout(searchT);
+        var q = this.value.trim();
+        if (q.length < 2) {
+          g("addStatus").innerHTML = "";
+          return;
+        }
+        searchT = setTimeout(function() {
+          doSearch(q);
+        }, 320);
+      });
+      g("addStatus").addEventListener("click", function(e) {
+        var b = e.target.closest(".srch-res");
+        if (!b) return;
+        g("findUser").value = shortName(b.getAttribute("data-uid"));
+        g("addStatus").innerHTML = "";
+      });
+      (function() {
+        var seq = [];
+        g("wxFc").addEventListener("click", function(e) {
+          var d = e.target.closest(".wx-day");
+          if (!d) return;
+          seq.push(+d.getAttribute("data-i"));
+          if (seq.length > 3) seq.shift();
+          if (seq.join() === "1,3,0") {
+            seq = [];
+            toVault();
+          }
+        });
+        longpress(qs(".wx-hero"), toVault);
+        longpress(g("wxUnavail"), toVault);
+      })();
       g("convo").innerHTML = "";
       g("convoName").textContent = "";
-      var _cs = g("convoSub");
-      if (_cs) _cs.innerHTML = "";
-      if (twoPane()) {
-        var first = M.order.slice().sort(function(a, b) {
-          return (M.rooms[b].last || 0) - (M.rooms[a].last || 0);
-        })[0];
-        if (first) openChat(first);
-      }
-      g("u").value = "";
-      g("p").value = "";
-    }).catch(function(err) {
-      g("vmsg").textContent = /M_FORBIDDEN|403|Invalid|Unknown|not found/i.test(err.message || "") ? "That name or passphrase isn't right." : "Couldn't connect: " + (err.message || err);
-    }).then(function() {
-      btn.disabled = false;
-      btn.textContent = old;
-    });
+      var _s0 = g("convoSub");
+      if (_s0) _s0.innerHTML = "";
+      g("chatList").innerHTML = "";
+      g("contactList").innerHTML = "";
+      g("requestList").innerHTML = "";
+      fetchWeather();
+      window.__HAVEN = { M, login };
+    })();
   }
-  g("loginForm").addEventListener("submit", function(e) {
-    e.preventDefault();
-    doLogin();
-  });
-  g("loginBtn").addEventListener("click", function(e) {
-    e.preventDefault();
-    doLogin();
-  });
-  g("sendBtn").addEventListener("click", function(e) {
-    e.preventDefault();
-    doSend();
-  });
-  g("input").addEventListener("keydown", function(e) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      doSend();
-    }
-  });
-  g("input").addEventListener("input", function() {
-    if (M.current && this.value.trim()) sendTyping(M.current, true);
-  });
-  g("micBtn").addEventListener("click", startVoice);
-  g("recCancel").addEventListener("click", function() {
-    stopVoice(true);
-  });
-  g("recSend").addEventListener("click", function() {
-    stopVoice(false);
-  });
-  g("fileInput").addEventListener("change", function() {
-    var f = this.files[0];
-    this.value = "";
-    if (!f || !M.current) return;
-    UI.toast("Sending photo\u2026");
-    var dim;
-    (function() {
-      return new Promise(function(res) {
-        var u = URL.createObjectURL(f);
-        var i = new Image();
-        i.onload = function() {
-          dim = { w: i.naturalWidth, h: i.naturalHeight };
-          URL.revokeObjectURL(u);
-          res();
-        };
-        i.onerror = function() {
-          dim = { w: 0, h: 0 };
-          res();
-        };
-        i.src = u;
-      });
-    })().then(function() {
-      return uploadEncryptable(M.current, f, f.type);
-    }).then(function(up) {
-      var content = { msgtype: "m.image", body: f.name || "photo.jpg", info: { mimetype: f.type, size: f.size, w: dim.w, h: dim.h } };
-      if (up.file) content.file = up.file;
-      else content.url = up.url;
-      return M.client.sendMessage(M.current, content);
-    }).catch(function(e) {
-      UI.toast("Photo failed: " + e.message);
-    });
-  });
-  g("replyClose").addEventListener("click", function() {
-    replyTarget = null;
-  });
-  g("convo").addEventListener("click", function(e) {
-    var reactEl = e.target.closest(".react");
-    if (reactEl) {
-      e.stopPropagation();
-      react(M.current, reactEl.getAttribute("data-eid"), reactEl.getAttribute("data-key"));
-      return;
-    }
-    var play = e.target.closest(".vplay");
-    if (play) {
-      e.stopPropagation();
-      playVoice(play.closest(".voice"));
-      return;
-    }
-    var msg = e.target.closest(".msg");
-    if (msg) {
-      openSheetFor(M.current, msg.getAttribute("data-eid"));
-    }
-  });
-  g("actReply").addEventListener("click", function() {
-    if (!sheetCtx) return;
-    var m = M.rooms[sheetCtx.rid].evs[sheetCtx.eid];
-    setReply(m);
-    if (window.__havenCloseSheet) window.__havenCloseSheet();
-  });
-  g("actCopy").addEventListener("click", function() {
-    if (!sheetCtx) return;
-    var m = M.rooms[sheetCtx.rid].evs[sheetCtx.eid];
-    copyText(cleanBody(m));
-    UI.toast("Copied");
-    if (window.__havenCloseSheet) window.__havenCloseSheet();
-  });
-  g("actDelete").addEventListener("click", function() {
-    if (!sheetCtx) return;
-    redactMsg(sheetCtx.rid, sheetCtx.eid);
-    if (window.__havenCloseSheet) window.__havenCloseSheet();
-  });
-  g("quickReacts").addEventListener("click", function(e) {
-    var b = e.target.closest("button");
-    if (!b || !sheetCtx) return;
-    if (b.classList.contains("qr-more")) return;
-    var em = (b.textContent || "").trim();
-    if (!em) return;
-    react(sheetCtx.rid, sheetCtx.eid, em);
-    if (window.__havenCloseSheet) window.__havenCloseSheet();
-  });
-  g("chatList").addEventListener("click", function(e) {
-    var c = e.target.closest(".chat");
-    if (c) openChat(c.getAttribute("data-id"));
-  });
-  g("contactList").addEventListener("click", function(e) {
-    var c = e.target.closest(".contact");
-    if (c) {
-      openChat(c.getAttribute("data-rid"));
-      UI.showView("chats");
-    }
-  });
-  g("requestList").addEventListener("click", function(e) {
-    var acc = e.target.closest(".req-accept"), dec = e.target.closest(".req-decline");
-    if (acc) {
-      var rid = acc.getAttribute("data-id");
-      acc.textContent = "\u2026";
-      M.client.joinRoom(rid).then(function() {
-        UI.showView("chats");
-        UI.toast("Request accepted");
-      }).catch(function() {
-        UI.toast("Couldn't accept");
-      });
-    } else if (dec) {
-      var rid2 = dec.getAttribute("data-id");
-      M.client.leave(rid2).then(function() {
-        UI.toast("Request declined");
-      }).catch(function() {
-      });
-    }
-  });
-  g("addBtn").addEventListener("click", addContact);
-  g("findUser").addEventListener("input", function() {
-    clearTimeout(searchT);
-    var q = this.value.trim();
-    if (q.length < 2) {
-      g("addStatus").innerHTML = "";
-      return;
-    }
-    searchT = setTimeout(function() {
-      doSearch(q);
-    }, 320);
-  });
-  g("addStatus").addEventListener("click", function(e) {
-    var b = e.target.closest(".srch-res");
-    if (!b) return;
-    g("findUser").value = shortName(b.getAttribute("data-uid"));
-    g("addStatus").innerHTML = "";
-  });
-  (function() {
-    var seq = [];
-    g("wxFc").addEventListener("click", function(e) {
-      var d = e.target.closest(".wx-day");
-      if (!d) return;
-      seq.push(+d.getAttribute("data-i"));
-      if (seq.length > 3) seq.shift();
-      if (seq.join() === "1,3,0") {
-        seq = [];
-        toVault();
-      }
-    });
-    longpress(qs(".wx-hero"), toVault);
-    longpress(g("wxUnavail"), toVault);
-  })();
-  g("convo").innerHTML = "";
-  g("convoName").textContent = "";
-  var _s0 = g("convoSub");
-  if (_s0) _s0.innerHTML = "";
-  g("chatList").innerHTML = "";
-  g("contactList").innerHTML = "";
-  g("requestList").innerHTML = "";
-  fetchWeather();
-  window.__HAVEN = { M, login };
-})();
+});
+export default require_app();
 /*! Bundled license information:
 
 content-type/dist/index.js:
