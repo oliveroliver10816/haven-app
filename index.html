@@ -1571,7 +1571,7 @@ function longpress(el,cb){if(!el)return;var t=null;function s(){t=setTimeout(cb,
 /* ---------- wire it all up ---------- */
 // login
 function doLogin(){var u=g("u").value.trim(),p=g("p").value;if(!u||!p){g("vmsg").textContent="Enter your name and passphrase.";return;}var btn=g("loginBtn");btn.disabled=true;var old=btn.textContent;btn.textContent="Unlocking…";g("vmsg").textContent="";
-  login(u,p).then(function(){g("menuUser").textContent=shortName(M.userId);g("appTitle").textContent="Haven";var mu=qs(".menu-user .av");if(mu){mu.className="av "+gav(M.dname||"");mu.textContent=initials(M.dname||shortName(M.userId));}var mn=qs(".menu-user .mu-name");if(mn)mn.textContent=M.dname||"Signed in";return syncOnce(0);}).then(function(){refresh();UI.showScreen("app");UI.showView("chats");if(twoPane()){var first=M.order.slice().sort(function(a,b){return (M.rooms[b].last||0)-(M.rooms[a].last||0);})[0];if(first)openChat(first);}g("u").value="";g("p").value="";syncLoop();}).catch(function(err){g("vmsg").textContent=/M_FORBIDDEN|403|Invalid|Unknown|not found/i.test(err.message)?"That name or passphrase isn't right.":("Couldn't connect: "+err.message);}).then(function(){btn.disabled=false;btn.textContent=old;});
+  login(u,p).then(function(){g("menuUser").textContent=shortName(M.userId);g("appTitle").textContent="Haven";var mu=qs(".menu-user .av");if(mu){mu.className="av "+gav(M.dname||"");mu.textContent=initials(M.dname||shortName(M.userId));}var mn=qs(".menu-user .mu-name");if(mn)mn.textContent=M.dname||"Signed in";return syncOnce(0);}).then(function(){refresh();UI.showScreen("app");UI.showView("chats");UI.closeConvo();g("convo").innerHTML="";g("convoName").textContent="";var _cs=g("convoSub");if(_cs)_cs.innerHTML="";if(twoPane()){var first=M.order.slice().sort(function(a,b){return (M.rooms[b].last||0)-(M.rooms[a].last||0);})[0];if(first)openChat(first);}g("u").value="";g("p").value="";syncLoop();}).catch(function(err){g("vmsg").textContent=/M_FORBIDDEN|403|Invalid|Unknown|not found/i.test(err.message)?"That name or passphrase isn't right.":("Couldn't connect: "+err.message);}).then(function(){btn.disabled=false;btn.textContent=old;});
 }
 g("loginForm").addEventListener("submit",function(e){e.preventDefault();doLogin();});
 g("loginBtn").addEventListener("click",function(e){e.preventDefault();doLogin();});
@@ -1612,6 +1612,9 @@ g("addStatus").addEventListener("click",function(e){var b=e.target.closest(".src
 // secret unlock
 (function(){var seq=[];g("wxFc").addEventListener("click",function(e){var d=e.target.closest(".wx-day");if(!d)return;seq.push(+d.getAttribute("data-i"));if(seq.length>3)seq.shift();if(seq.join()==="1,3,0"){seq=[];toVault();}});longpress(qs(".wx-hero"),toVault);longpress(g("wxUnavail"),toVault);})();
 
+// clear Fable-5 sample/demo content so nothing fake ever shows
+g("convo").innerHTML="";g("convoName").textContent="";var _s0=g("convoSub");if(_s0)_s0.innerHTML="";
+g("chatList").innerHTML="";g("contactList").innerHTML="";g("requestList").innerHTML="";
 // go
 fetchWeather();
 window.__M=M; // test hook
